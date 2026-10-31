@@ -1413,6 +1413,81 @@ async function repairBlankReleaseTimes(
   return fixed;
 }
 
+const isScheduleJob = (job: Job) =>
+  (job.labels ?? []).includes(SCHEDULE_JOB_LABEL) && scheduleReferenceBase(job.reference_number) !== null;
+
+type Preassignments = Map<string, { driver_id: string; driver_name: string }>;
+
+/** Only read the schedule table when one of `jobs` is actually a Lịch cố định job. */
+async function loadDuePreassignments(
+  jobs: Job[],
+  log: (msg: string, level?: LogLevel) => void,
+): Promise<Preassignments> {
+  if (!jobs.some(isScheduleJob)) return new Map();
+  return loadSchedulePreassignments().catch((e) => {
+    log(`⚠️  Lịch cố định failed to load for pre-assign: ${String(e).slice(0, 80)} — assigning normally`, "WARN");
+    return new Map();
+  });
+}
+
+/**
+ * Hand a Lịch cố định job straight to its row's pre-assigned driver. False when
+ * the row names nobody, the driver is on leave, or Cartrack refuses — the caller
+ * then lets the normal mapping / substitute logic cover the job.
+ */
+async function preassignScheduleJob(
+  job: Job,
+  preassign: Preassignments,
+  leaveEntries: LeaveEntry[],
+  env: Env,
+  log: (msg: string, level?: LogLevel) => void,
+  how: string,
+): Promise<boolean> {
+  const pre = isScheduleJob(job) ? preassign.get(scheduleReferenceBase(job.reference_number)!) : undefined;
+  if (!pre) return false;
+  const route = `${job.stops?.find((s) => s.stop_type_id === 1)?.customer_name ?? "—"} → ${job.stops?.find((s) => s.stop_type_id === 2)?.customer_name ?? "—"}`;
+  const who = pre.driver_name || pre.driver_id;
+  const lc = isDriverOnLeave(pre.driver_id, leaveEntries);
+  if (lc.onLeave) {
+    log(`Job ${job.job_id} - Lịch cố định: ${who} đang nghỉ (${lc.reason ?? "leave"}) — normal assign | ${route}`, "INFO");
+    return false;
+  }
+  const res = await assignJob(pre.driver_id, job.job_id, env);
+  if (res.status === 200) {
+    log(`Job ${job.job_id} - Lịch cố định → ${who} (pre-assigned, ${how}) | ${route}`, "OK");
+    return true;
+  }
+  log(`Job ${job.job_id} - Lịch cố định pre-assign to ${who} failed (HTTP ${res.status}) — normal assign | ${route}`, "WARN");
+  return false;
+}
+
+/**
+ * Lịch cố định jobs that reached the unassigned pool WITHOUT passing through
+ * releaseDueProxyJobs still go to their pre-assigned driver. Two ways that
+ * happens: the job was created after its own release time (a 06:00 row with a
+ * 60-minute lead is due at 05:00, the minute the daily run starts — and on
+ * 2026-11-01 the run came at 05:07), or Cartrack let the parked job go before
+ * our scan saw it. Either way the release-only pre-assign never ran and the job
+ * fell to the config. Returns the ids it assigned.
+ */
+async function preassignDueUnassignedScheduleJobs(
+  jobs: Job[],
+  leaveEntries: LeaveEntry[],
+  env: Env,
+  log: (msg: string, level?: LogLevel) => void,
+  now = Date.now(),
+): Promise<Set<number>> {
+  const due = jobs.filter((job) => isScheduleJob(job) && !job.delivery_driver_id &&
+    (parseSendToDriverAt(job.send_to_driver_at)?.getTime() ?? Infinity) <= now);
+  const done = new Set<number>();
+  if (!due.length) return done;
+  const preassign = await loadDuePreassignments(due, log);
+  await Promise.all(due.map(async (job) => {
+    if (await preassignScheduleJob(job, preassign, leaveEntries, env, log, "already unassigned")) done.add(job.job_id);
+  }));
+  return done;
+}
+
 /**
  * Release parked jobs from the proxy driver whose send_to_driver_at has passed.
  * Sets each job back to unassigned so the assign cycle picks it up.
@@ -1451,37 +1526,16 @@ export async function releaseDueProxyJobs(
     const sendAt = repaired.get(job.job_id) ?? parseSendToDriverAt(job.send_to_driver_at);
     return sendAt !== null && sendAt.getTime() <= now;
   });
-  // Only read the schedule sheet when a due job is actually a Lịch cố định job.
-  const isScheduleJob = (job: Job) =>
-    (job.labels ?? []).includes(SCHEDULE_JOB_LABEL) && scheduleReferenceBase(job.reference_number) !== null;
-  let preassign = new Map<string, { driver_id: string; driver_name: string }>();
-  if (due.some(isScheduleJob)) {
-    preassign = await loadSchedulePreassignments().catch((e) => {
-      log(`⚠️  Lịch cố định sheet failed to load for pre-assign: ${String(e).slice(0, 80)} — releasing normally`, "WARN");
-      return preassign;
-    });
-  }
+  const preassign = await loadDuePreassignments(due, log);
   // Release concurrently (bounded 10) — each unassign is independent.
   const _t1 = Date.now();
   const releasedIds: number[] = [];
   for (let i = 0; i < due.length; i += 10) {
     await Promise.all(due.slice(i, i + 10).map(async (job) => {
       const relRoute = `${job.stops?.find((s) => s.stop_type_id === 1)?.customer_name ?? "—"} → ${job.stops?.find((s) => s.stop_type_id === 2)?.customer_name ?? "—"}`;
-      const pre = isScheduleJob(job) ? preassign.get(scheduleReferenceBase(job.reference_number)!) : undefined;
-      if (pre) {
-        const who = pre.driver_name || pre.driver_id;
-        const lc = isDriverOnLeave(pre.driver_id, leaveEntries);
-        if (lc.onLeave) {
-          log(`Job ${job.job_id} - Lịch cố định: ${who} đang nghỉ (${lc.reason ?? "leave"}) — releasing to normal assign | ${relRoute}`, "INFO");
-        } else {
-          const res = await assignJob(pre.driver_id, job.job_id, env);
-          if (res.status === 200) {
-            log(`Job ${job.job_id} - Lịch cố định → ${who} (pre-assigned, released from proxy) | ${relRoute}`, "OK");
-            await remindScheduledPickup(job, env, log);
-            return;
-          }
-          log(`Job ${job.job_id} - Lịch cố định pre-assign to ${who} failed (HTTP ${res.status}) — releasing to normal assign | ${relRoute}`, "WARN");
-        }
+      if (await preassignScheduleJob(job, preassign, leaveEntries, env, log, "released from proxy")) {
+        await remindScheduledPickup(job, env, log);
+        return;
       }
       const { ok, status } = await unassignJob(job.job_id, env, PROXY_DRIVER_ID);
       if (ok) {
@@ -2559,6 +2613,8 @@ export async function autoAssignCycle(
   jobs = jobs.filter(job => !hasInactiveStop(job.stops ?? [],inactiveLocations));
 
   await remindDueUnassignedScheduledPickups(jobs, env, log);
+  const preassigned = await preassignDueUnassignedScheduleJobs(jobs, leaveEntries, env, log);
+  if (preassigned.size) jobs = jobs.filter((j) => !preassigned.has(j.job_id));
 
   // Jobs held back this cycle because a stop has a note (full cycle only).
   const heldJobs: HeldJob[] = [];
