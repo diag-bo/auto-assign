@@ -56,23 +56,23 @@ const editor = renderToStaticMarkup(createElement(BranchEditor, {...config,drive
 assert.ok(editor.includes("Copy ca từ điểm khác") && editor.includes("Lưu"));
 
 const copied = applyCopiedLines([{...config.extraLines[0], key:"new"}], [
-  {driver:"Driver A",start:"08:00",end:"12:00",sourceRow:10,sourceRuleId:80,assignment_mode:"smart",alt_drop_off_id:"alternate"},
-  {driver:"Driver B",start:"12:00",end:"19:00",sourceRow:11,sourceRuleId:81,assignment_mode:"fixed"},
+  {driver:"Driver A",start:"08:00",end:"12:00",sourceRuleId:80,assignment_mode:"smart",alt_drop_off_id:"alternate"},
+  {driver:"Driver B",start:"12:00",end:"19:00",sourceRuleId:81,assignment_mode:"fixed"},
 ], config.dropoffName);
 assert.equal(copied.lines.length, 2);
-assert.ok(copied.lines.every(l => l.dropoff === "BRA - D006" && !l.row && !l.rule_id));
+assert.ok(copied.lines.every(l => l.dropoff === "BRA - D006" && !l.rule_id));
 assert.equal(copied.lines[0].copyFromRuleId, 80);
 assert.equal(copied.lines[0].assignment_mode, "smart");
 assert.equal(copied.lines[0].alt_drop_off_id, "alternate");
 
 rows = [
-  {customer_id:pickupId,row:2,driver:"A",start:"08:00",end:"12:00",dropoff:""},
-  {customer_id:pickupId,row:3,driver:"B",start:"12:00",end:"19:00",dropoff:"BRA - D006"},
-  {customer_id:pickupId,row:4,driver:"C",dropoff:"BRA - D001"},
-  {customer_id:"other",row:5,driver:"D",dropoff:"BRA - D006"},
+  {customer_id:pickupId,rule_id:2,revision:1,driver:"A",start:"08:00",end:"12:00",dropoff:""},
+  {customer_id:pickupId,rule_id:3,revision:1,driver:"B",start:"12:00",end:"19:00",dropoff:"BRA - D006"},
+  {customer_id:pickupId,rule_id:4,revision:1,driver:"C",dropoff:"BRA - D001"},
+  {customer_id:"other",rule_id:5,revision:1,driver:"D",dropoff:"BRA - D006"},
 ];
 const existing = await load(34479357, "prod");
-assert.deepEqual(existing.rules.map((r: {row:number}) => r.row), [2,3]);
+assert.deepEqual(existing.rules.map((r: {rule_id:number}) => r.rule_id), [2,3]);
 assert.deepEqual(existing.extraLines, [], "reopening after save must not append another empty rule");
 stale = true; await assert.rejects(load(1, "prod"), /cấu hình mới/); stale = false;
 badStatus = true; await assert.rejects(load(1, "prod")); badStatus = false;

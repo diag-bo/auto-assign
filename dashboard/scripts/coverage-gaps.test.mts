@@ -21,8 +21,8 @@ const eq = (l: string, got: unknown, want: unknown) =>
   ok(l, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)}\n       want ${JSON.stringify(want)}`);
 
 const t = (v: string) => ({ hours: +v.split(":")[0], minutes: +v.split(":")[1] });
-const rule = (row: number, driver: string, s: string | null, e: string | null): RuleRow =>
-  ({ row, driver, start: s ? t(s) : null, end: e ? t(e) : null, dropoff: "" });
+const rule = (id: number, driver: string, s: string | null, e: string | null): RuleRow =>
+  ({ rule_id: id, revision: 1, driver, start: s ? t(s) : null, end: e ? t(e) : null, dropoff: "" });
 const gap = (at: string) => ({ customer_id: "C1", pickup_name: "PK Test", at });
 
 // Cover uses the engine's own half-open window: the start minute belongs to the
@@ -37,8 +37,8 @@ ok("a minute in the hole is not covered", !isCovered(day, 15 * 60 + 10));
   const { open, closed } = resolveGaps([gap("15:10")], new Map([["C1", day]]));
   eq("a gap that is still open stays open", open.length, 1);
   eq("...and nothing is retracted", closed.length, 0);
-  eq("the rule before the hole is named, with its row", [open[0].before?.row, open[0].before?.driver], [10, "An"]);
-  eq("so is the one after", [open[0].after?.row, open[0].after?.driver], [11, "Bình"]);
+  eq("the rule before the hole is named, with its id", [open[0].before?.rule_id, open[0].before?.driver], [10, "An"]);
+  eq("so is the one after", [open[0].after?.rule_id, open[0].after?.driver], [11, "Bình"]);
 }
 {
   // Someone stretched the earlier rule to 16:30. The hole is gone, so the record
@@ -68,7 +68,7 @@ ok("a minute in the hole is not covered", !isCovered(day, 15 * 60 + 10));
 {
   const { open } = resolveGaps([gap("06:00")], new Map([["C1", [rule(10, "An", "07:00", "14:30")]]]));
   eq("a hole before the first rule offers only the later boundary",
-     [open[0].before, open[0].after?.row], [null, 10]);
+     [open[0].before, open[0].after?.rule_id], [null, 10]);
 }
 {
   const { closed } = resolveGaps([gap("nonsense")], new Map([["C1", day]]));
@@ -95,7 +95,7 @@ ok("a minute in the hole is not covered", !isCovered(day, 15 * 60 + 10));
   const { open } = resolveGaps([gap("11:30"), gap("16:30")], new Map([["C1", threeShifts]]));
   eq("separate holes stay separate", open.length, 2);
   eq("...each naming its own pair of rows",
-     open.map((o) => [o.before?.row, o.after?.row]), [[10, 11], [11, 12]]);
+     open.map((o) => [o.before?.rule_id, o.after?.rule_id]), [[10, 11], [11, 12]]);
 }
 {
   // The destination is context on the row, so it has to survive a collapse only
@@ -142,8 +142,8 @@ ok("a minute in the hole is not covered", !isCovered(day, 15 * 60 + 10));
   // 06:45–15:15. A 15:37 job to MEDIC fell in a hole and the panel offered to
   // stretch #1702 — a row that will never take a MEDIC job. Both rows end at
   // 15:15, so the wrong one won purely on sheet order.
-  const scoped = (row: number, driver: string, s: string, e: string, to: string): RuleRow =>
-    ({ ...rule(row, driver, s, e), dropoff: to });
+  const scoped = (id: number, driver: string, s: string, e: string, to: string): RuleRow =>
+    ({ ...rule(id, driver, s, e), dropoff: to });
   const MEDIC = "SENDOUT2 - D10 - HHao - MEDIC";
   const BIOTEK = "SENDOUT22 - D7 - TXSoan - Nam Khoa Biotek";
   const twoRoutes = [
@@ -153,7 +153,7 @@ ok("a minute in the hole is not covered", !isCovered(day, 15 * 60 + 10));
   const to = (at: string, dropoff_name: string) => ({ ...gap(at), dropoff_name });
 
   const { open } = resolveGaps([to("15:37", MEDIC)], new Map([["C1", twoRoutes]]));
-  eq("the neighbour named serves the same destination", open[0].before?.row, 1703);
+  eq("the neighbour named serves the same destination", open[0].before?.rule_id, 1703);
   eq("...with that row's window, not the other's", open[0].before?.window, "05:30–15:15");
 
   // The dangerous half: the other route's rule must not close a hole it can

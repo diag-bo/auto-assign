@@ -13,6 +13,8 @@
 
 /** Just enough of a parsed mapping row to audit it. */
 export interface AuditableRow {
+  /** Present when the caller has the rule — an overlap is only ACTIONABLE with
+   *  it, because the fix is moving one boundary of one rule. */
   rule_id?: number;
   revision?: number;
   customer_id: string;
@@ -33,17 +35,6 @@ export interface AuditableRow {
    * exactly the arrangement that feature exists to allow.
    */
   dropoff_id?: string;
-  /**
-   * The 1-based sheet row, when the caller has it.
-   *
-   * Optional because the mapping this is usually handed does not carry one — a
-   * row number on all ~1,700 parsed rows would grow the cached blob to label a
-   * handful, the same reasoning that keeps branch NAMES out of it. The config
-   * parse passes rows in because an overlap is only ACTIONABLE with them: the
-   * fix is moving one boundary in one row, and a report that cannot say which
-   * row is a sentence rather than a task.
-   */
-  row?: number;
 }
 
 // ── Two rules for one branch, live at the same minute ────────────────────────
@@ -96,9 +87,8 @@ export interface ShiftOverlap {
 
 /** One side of an overlapping pair, in the shape the boundary-mover takes. */
 export interface OverlapSide {
-  rule_id?: number;
-  revision?: number;
-  row: number;
+  rule_id: number;
+  revision: number;
   driver: string;
   /** "HH:MM–HH:MM", or "" for a rule with no window (on duty all day). */
   window: string;
@@ -205,11 +195,11 @@ export function findShiftOverlaps(
           // Reported back in the sheet's own half-open terms, so the window
           // printed here is the one to type into the cell to fix it.
           window: `${hhmm(hit[0] - 1)}–${hhmm(hit[1])}`,
-          ...(first.row != null && second.row != null
+          ...(first.rule_id != null && first.revision != null && second.rule_id != null && second.revision != null
             ? {
                 rules: [
-                  { rule_id:first.rule_id, revision:first.revision, row: first.row, driver: first.first_name_last_name, window: sideWindow(first) },
-                  { rule_id:second.rule_id, revision:second.revision, row: second.row, driver: second.first_name_last_name, window: sideWindow(second) },
+                  { rule_id:first.rule_id, revision:first.revision, driver: first.first_name_last_name, window: sideWindow(first) },
+                  { rule_id:second.rule_id, revision:second.revision, driver: second.first_name_last_name, window: sideWindow(second) },
                 ] as [OverlapSide, OverlapSide],
               }
             : {}),
@@ -306,12 +296,11 @@ export function unresolvedWarning(u: UnresolvedRows): string | null {
 
 // ── Which recorded gaps are still open ───────────────────────────────────────
 
-/** A rule as the parse saw it, with the sheet row so a boundary can be moved. */
+/** A rule as the parse saw it, with its id so a boundary can be moved. */
 export interface RuleRow {
-  rule_id?: number;
-  revision?: number;
+  rule_id: number;
+  revision: number;
   assignment_mode?: "fixed" | "smart";
-  row: number;
   driver: string;
   start: { hours: number; minutes: number } | null;
   end: { hours: number; minutes: number } | null;
@@ -402,7 +391,7 @@ export function resolveGaps(
       if (e <= at && (!before || e > (before.end!.hours * 60 + before.end!.minutes))) before = r;
       if (st >= at && (!after || st < (after.start!.hours * 60 + after.start!.minutes))) after = r;
     }
-    const hole = `${g.customer_id}|${g.dropoff_name?.trim() ?? ""}|${before ? before.row : "-"}|${after ? after.row : "-"}`;
+    const hole = `${g.customer_id}|${g.dropoff_name?.trim() ?? ""}|${before ? before.rule_id : "-"}|${after ? after.rule_id : "-"}`;
     const seen = byHole.get(hole);
     if (seen) {
       // Earliest minute is the headline; the rest stay as evidence that it
@@ -418,8 +407,8 @@ export function resolveGaps(
       dropoff_name: g.dropoff_name ?? "",
       at: g.at,
       also: [],
-      before: before ? { rule_id:before.rule_id, revision:before.revision, row: before.row, driver: before.driver, window: win(before) } : null,
-      after: after ? { rule_id:after.rule_id, revision:after.revision, row: after.row, driver: after.driver, window: win(after) } : null,
+      before: before ? { rule_id:before.rule_id, revision:before.revision, driver: before.driver, window: win(before) } : null,
+      after: after ? { rule_id:after.rule_id, revision:after.revision, driver: after.driver, window: win(after) } : null,
     };
     byHole.set(hole, entry);
     open.push(entry);
@@ -437,8 +426,8 @@ export interface CoverageGapOut {
   at: string;
   /** Other minutes recorded against this same hole, earliest first. */
   also: string[];
-  before: { rule_id?:number; revision?:number; row: number; driver: string; window: string } | null;
-  after: { rule_id?:number; revision?:number; row: number; driver: string; window: string } | null;
+  before: { rule_id:number; revision:number; driver: string; window: string } | null;
+  after: { rule_id:number; revision:number; driver: string; window: string } | null;
 }
 
 

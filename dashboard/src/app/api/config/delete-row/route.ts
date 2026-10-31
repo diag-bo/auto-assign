@@ -17,14 +17,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") return bad("Body không hợp lệ");
     const configDay = resolveConfigDay(body.config_day);
-    const { row, pickup_name, expected_row } = body as { row?: number; pickup_name?: string; expected_row?: unknown };
-    if (!Number.isInteger(row) || (row as number) < 2) return bad("Thiếu số dòng hợp lệ");
+    const { pickup_name, expected_row } = body as { pickup_name?: string; expected_row?: unknown };
     if (!pickup_name?.trim()) return bad("Thiếu tên điểm lấy mẫu");
-    const expected = expected_row === undefined ? undefined : parseConfigRowSnapshot(expected_row);
-    if (expected_row !== undefined && !expected) return bad("Thông tin dòng cũ không hợp lệ");
+    const expected = parseConfigRowSnapshot(expected_row);
+    if (!expected) return bad("Thiếu mã quy tắc — tải lại");
 
     weekdayOnly(configDay);
-    const result = await editMasterConfig({ row: row as number, expectPickup: pickup_name, expected: expected ?? undefined }, { delete: true });
+    const result = await editMasterConfig({ expectPickup: pickup_name, expected }, { delete: true });
     await invalidateConfigCache();
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

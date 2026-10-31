@@ -25,8 +25,8 @@ function ok(label: string, cond: boolean, detail?: string) {
   console.log(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
 }
 
-const rule = (row: number, driver: string, start: string, end: string): BranchRule =>
-  ({ row, driver, start, end }) as BranchRule;
+const rule = (id: number, driver: string, start: string, end: string): BranchRule =>
+  ({ rule_id: id, revision: 1, driver, start, end }) as BranchRule;
 
 const eq = (label: string, got: unknown, want: unknown) =>
   ok(label, JSON.stringify(got) === JSON.stringify(want),
@@ -39,7 +39,7 @@ const gap = (at: string, g: Partial<CoverageGap> = {}): CoverageGap => ({
 
 /** Is minute m covered by any of these rules? Mirrors the engine via blocks(). */
 const covered = (m: number, rules: BranchRule[]) =>
-  rules.some((r) => blocks({ key: `row:${r.row}`, row: r.row, driver: r.driver, start: r.start, end: r.end, dropoff: "" })
+  rules.some((r) => blocks({ key: `rule:${r.rule_id}`, rule_id: r.rule_id, driver: r.driver, start: r.start, end: r.end, dropoff: "" })
     .some(([a, b]) => m >= a && m <= b));
 
 console.log("\ntime helpers");
@@ -60,17 +60,17 @@ ok("fromMin wraps past midnight", fromMin(1440) === "00:00", `got ${fromMin(1440
 // offered there.
 {
   console.log("closing an overlap");
-  const side = (row: number, driver: string, window: string) => ({ row, driver, window });
+  const side = (id: number, driver: string, window: string) => ({ rule_id: id, revision: 1, driver, window });
 
   // Two rules that simply run into each other: A until 16:00, B from 15:00.
   {
     const rules: BranchRule[] = [
-      { row: 10, driver: "A", start: "07:00", end: "16:00" },
-      { row: 11, driver: "B", start: "15:00", end: "20:00" },
+      { rule_id: 10, revision: 1, driver: "A", start: "07:00", end: "16:00" },
+      { rule_id: 11, revision: 1, driver: "B", start: "15:00", end: "20:00" },
     ];
     const out = shrinkOptions([side(10, "A", "07:00–16:00"), side(11, "B", "15:00–20:00")], rules);
     eq("both single-boundary fixes are offered",
-      out.map((s) => [s.row, s.edge, s.value]),
+      out.map((s) => [s.rule_id, s.edge, s.value]),
       [[10, "end", "15:00"], [11, "start", "16:00"]]);
     eq("…and each states the window it ends up with",
       out.map((s) => s.window), ["07:00–15:00", "16:00–20:00"]);
@@ -80,8 +80,8 @@ ok("fromMin wraps past midnight", fromMin(1440) === "00:00", `got ${fromMin(1440
   // own end inverts it. Neither may be offered.
   {
     const rules: BranchRule[] = [
-      { row: 10, driver: "A", start: "05:00", end: "20:00" },
-      { row: 11, driver: "B", start: "08:00", end: "12:00" },
+      { rule_id: 10, revision: 1, driver: "A", start: "05:00", end: "20:00" },
+      { rule_id: 11, revision: 1, driver: "B", start: "08:00", end: "12:00" },
     ];
     const out = shrinkOptions([side(10, "A", "05:00–20:00"), side(11, "B", "08:00–12:00")], rules);
     eq("a contained rule offers nothing — a hole is worse than the clash", out.length, 0);
@@ -90,8 +90,8 @@ ok("fromMin wraps past midnight", fromMin(1440) === "00:00", `got ${fromMin(1440
   // Identical windows: shrinking either leaves it covering nothing at all.
   {
     const rules: BranchRule[] = [
-      { row: 10, driver: "A", start: "07:00", end: "16:00" },
-      { row: 11, driver: "B", start: "07:00", end: "16:00" },
+      { rule_id: 10, revision: 1, driver: "A", start: "07:00", end: "16:00" },
+      { rule_id: 11, revision: 1, driver: "B", start: "07:00", end: "16:00" },
     ];
     const out = shrinkOptions([side(10, "A", "07:00–16:00"), side(11, "B", "07:00–16:00")], rules);
     eq("two identical rules cannot be separated by one boundary", out.length, 0);
@@ -100,20 +100,20 @@ ok("fromMin wraps past midnight", fromMin(1440) === "00:00", `got ${fromMin(1440
   // A third rule sits where one of the moves would land, so only the other survives.
   {
     const rules: BranchRule[] = [
-      { row: 10, driver: "A", start: "07:00", end: "16:00" },
-      { row: 11, driver: "B", start: "15:00", end: "20:00" },
-      { row: 12, driver: "C", start: "20:00", end: "22:00" },
+      { rule_id: 10, revision: 1, driver: "A", start: "07:00", end: "16:00" },
+      { rule_id: 11, revision: 1, driver: "B", start: "15:00", end: "20:00" },
+      { rule_id: 12, revision: 1, driver: "C", start: "20:00", end: "22:00" },
     ];
     const out = shrinkOptions([side(10, "A", "07:00–16:00"), side(11, "B", "15:00–20:00")], rules);
     eq("the untouched neighbour does not block the valid moves",
-      out.map((s) => s.row), [10, 11]);
+      out.map((s) => s.rule_id), [10, 11]);
   }
 
   // A rule with no window is on duty all day; no single boundary separates it.
   {
     const rules: BranchRule[] = [
-      { row: 10, driver: "A", start: "", end: "" },
-      { row: 11, driver: "B", start: "08:00", end: "12:00" },
+      { rule_id: 10, revision: 1, driver: "A", start: "", end: "" },
+      { rule_id: 11, revision: 1, driver: "B", start: "08:00", end: "12:00" },
     ];
     eq("an all-day rule goes to the editor",
       shrinkOptions([side(10, "A", ""), side(11, "B", "08:00–12:00")], rules).length, 0);
@@ -126,15 +126,15 @@ ok("fromMin wraps past midnight", fromMin(1440) === "00:00", `got ${fromMin(1440
   // are valid here, and neither loses a covered minute.
   {
     const rules: BranchRule[] = [
-      { row: 40, driver: "Đặng Khắc Huy", start: "07:00", end: "19:00" },
-      { row: 41, driver: "Đặng Khắc Huy", start: "15:15", end: "19:30" },
+      { rule_id: 40, revision: 1, driver: "Đặng Khắc Huy", start: "07:00", end: "19:00" },
+      { rule_id: 41, revision: 1, driver: "Đặng Khắc Huy", start: "15:15", end: "19:30" },
     ];
     const out = shrinkOptions(
       [side(40, "Đặng Khắc Huy", "07:00–19:00"), side(41, "Đặng Khắc Huy", "15:15–19:30")],
       rules,
     );
     eq("the live same-driver overlap is fixable both ways",
-      out.map((sh) => [sh.row, sh.edge, sh.value]),
+      out.map((sh) => [sh.rule_id, sh.edge, sh.value]),
       [[40, "end", "15:15"], [41, "start", "19:00"]]);
     eq("…and neither move gives up the evening",
       out.map((sh) => sh.window), ["07:00–15:15", "19:00–19:30"]);
@@ -148,8 +148,8 @@ ok("fromMin wraps past midnight", fromMin(1440) === "00:00", `got ${fromMin(1440
   // hour, and a gap is the fault the sheet itself never explains.
   {
     const rules: BranchRule[] = [
-      { row: 100, driver: "Nguyễn Tuấn Hoàng", start: "07:00", end: "16:00" },
-      { row: 101, driver: "Nguyễn Tuấn Hoàng", start: "07:00", end: "16:30" },
+      { rule_id: 100, revision: 1, driver: "Nguyễn Tuấn Hoàng", start: "07:00", end: "16:00" },
+      { rule_id: 101, revision: 1, driver: "Nguyễn Tuấn Hoàng", start: "07:00", end: "16:30" },
     ];
     eq("dropping the row wholly inside another costs nothing",
       coverageLostWithout(rules, 100), null);
@@ -160,22 +160,22 @@ ok("fromMin wraps past midnight", fromMin(1440) === "00:00", `got ${fromMin(1440
     // Two rules that merely hand over: each owns its own stretch, so removing
     // either is a real loss and both buttons should say so.
     const rules: BranchRule[] = [
-      { row: 10, driver: "A", start: "07:00", end: "12:00" },
-      { row: 11, driver: "B", start: "12:00", end: "19:00" },
+      { rule_id: 10, revision: 1, driver: "A", start: "07:00", end: "12:00" },
+      { rule_id: 11, revision: 1, driver: "B", start: "12:00", end: "19:00" },
     ];
     eq("a handover loses the earlier half", coverageLostWithout(rules, 10), "07:00–12:00");
     eq("…or the later one", coverageLostWithout(rules, 11), "12:00–19:00");
   }
   eq("a row that is not on the branch reports nothing",
-    coverageLostWithout([{ row: 10, driver: "A", start: "07:00", end: "12:00" }], 99), null);
+    coverageLostWithout([{ rule_id: 10, revision: 1, driver: "A", start: "07:00", end: "12:00" }], 99), null);
 
   // The key has to survive the fix changing the window, or the row reappears as
   // new the moment it is dealt with.
   eq("the dismiss key is the branch and the two rows",
-    overlapKey({ customer_id: "D014", rules: [{ row: 11 }, { row: 10 }] }), "D014|10-11");
+    overlapKey({ customer_id: "D014", rules: [{ rule_id: 11 }, { rule_id: 10 }] }), "D014|10-11");
   eq("…in a stable order whichever side is listed first",
-    overlapKey({ customer_id: "D014", rules: [{ row: 10 }, { row: 11 }] }),
-    overlapKey({ customer_id: "D014", rules: [{ row: 11 }, { row: 10 }] }));
+    overlapKey({ customer_id: "D014", rules: [{ rule_id: 10 }, { rule_id: 11 }] }),
+    overlapKey({ customer_id: "D014", rules: [{ rule_id: 11 }, { rule_id: 10 }] }));
 }
 
 console.log("\ntwo rules on one minute only clash when they answer for the same place");
@@ -186,8 +186,8 @@ console.log("\ntwo rules on one minute only clash when they answer for the same 
   // before the overlap means anything. Getting this wrong is not cosmetic in
   // either direction: too strict refuses a roster the engine runs happily, too
   // loose writes a CLASH that stops the branch assigning at all.
-  const line = (row: number, driver: string, start: string, end: string, dropoff = "") =>
-    ({ key: `row:${row}`, row, driver, start, end, dropoff });
+  const line = (id: number, driver: string, start: string, end: string, dropoff = "") =>
+    ({ key: `rule:${id}`, rule_id: id, driver, start, end, dropoff });
 
   ok("blank vs blank, overlapping — the check as it always was",
     findClash([line(1, "Nam", "07:00", "16:00"), line(2, "Hùng", "12:00", "19:00")]) !== null);
@@ -229,42 +229,42 @@ console.log("\ntwo rules on one minute only clash when they answer for the same 
 
 console.log("\na copy fills the empty sheet row it was opened from");
 {
-  const line = (key: string, driver: string, start: string, end: string, dropoff = "", row?: number) =>
-    ({ key, row, driver, start, end, dropoff });
+  const line = (key: string, driver: string, start: string, end: string, dropoff = "", id?: number) =>
+    ({ key, rule_id: id, revision: id ? 1 : undefined, driver, start, end, dropoff });
 
   // The live report: branch "3PL - TOT3 - Q5 → BRA - D001" sat in the to-do list
   // as row #1741 — a window, no driver. Copying a day onto it used to append
   // beside that row, leaving it empty; the save then refused on it and the copy
   // could not be written at all.
   {
-    const before = [line("row:1741", "", "13:00", "14:00", "BRA - D001", 1741)];
+    const before = [line("rule:1741", "", "13:00", "14:00", "BRA - D001", 1741)];
     const { lines, touched } = applyCopiedLines(before, [
       { driver: "Nguyễn Hoàng Vũ", start: "08:15", end: "17:15" },
     ], "BRA - D001");
     eq("the empty row is used, not left beside a new one", lines.length, 1);
-    eq("it keeps its sheet row, so the save UPDATES it", lines[0].row, 1741);
+    eq("it keeps its rule id, so the save UPDATES it", lines[0].rule_id, 1741);
     eq("the driver comes from the copy", lines[0].driver, "Nguyễn Hoàng Vũ");
     eq("so do the hours — the stale window would have clashed", [lines[0].start, lines[0].end],
       ["08:15", "17:15"]);
-    eq("the filled row is highlighted like an added one", touched, ["row:1741"]);
+    eq("the filled row is highlighted like an added one", touched, ["rule:1741"]);
     ok("and the result saves: nothing is left without a driver",
       lines.every((l) => l.driver.trim()) && findClash(lines) === null);
   }
 
   // More rules than empty rows: the rows are used up first, the rest are new.
   {
-    const before = [line("row:9", "", "13:00", "14:00", "", 9)];
+    const before = [line("rule:9", "", "13:00", "14:00", "", 9)];
     const { lines } = applyCopiedLines(before, [
       { driver: "A", start: "05:00", end: "13:25" },
       { driver: "B", start: "13:25", end: "19:00" },
     ], "");
-    eq("one adopted, one appended", lines.map((l) => [l.driver, l.row ?? null]),
+    eq("one adopted, one appended", lines.map((l) => [l.driver, l.rule_id ?? null]),
       [["A", 9], ["B", null]]);
   }
 
   // Existing rows take the destination of the branch being copied into.
   {
-    const before = [line("row:9", "", "13:00", "14:00", "Old destination", 9)];
+    const before = [line("rule:9", "", "13:00", "14:00", "Old destination", 9)];
     const { lines } = applyCopiedLines(before, [
       { driver: "A", start: "05:00", end: "13:25" },
     ], "BRA - D001");
@@ -280,12 +280,12 @@ console.log("\na copy fills the empty sheet row it was opened from");
 
   // A copy replaces populated rows too, keeping their sheet row for an update.
   {
-    const before = [line("row:9", "Nam", "05:00", "13:25", "", 9)];
+    const before = [line("rule:9", "Nam", "05:00", "13:25", "", 9)];
     const { lines, touched, removed } = applyCopiedLines(before, [
       { driver: "B", start: "13:25", end: "19:00" },
     ], "");
-    eq("the existing rule is overwritten in place", lines.map((l) => [l.driver, l.row]), [["B", 9]]);
-    eq("the overwritten row is highlighted", touched, ["row:9"]);
+    eq("the existing rule is overwritten in place", lines.map((l) => [l.driver, l.rule_id]), [["B", 9]]);
+    eq("the overwritten row is highlighted", touched, ["rule:9"]);
     eq("the reused row is not deleted", removed, []);
   }
   {
@@ -299,27 +299,15 @@ console.log("\na copy fills the empty sheet row it was opened from");
   // Copying a shorter day removes surplus sheet rules on Save.
   {
     const before = [
-      line("row:9", "Nam", "05:00", "13:25", "", 9),
-      line("row:10", "Hùng", "13:25", "19:00", "", 10),
+      line("rule:9", "Nam", "05:00", "13:25", "", 9),
+      line("rule:10", "Hùng", "13:25", "19:00", "", 10),
     ];
     const { lines, removed } = applyCopiedLines(before, [
       { driver: "B", start: "08:00", end: "17:00" },
     ], "");
     eq("the shorter copy leaves one rule", lines.map((l) => l.driver), ["B"]);
-    eq("the surplus sheet row is queued for deletion", removed.map((l) => l.row), [10]);
+    eq("the surplus rule is queued for deletion", removed.map((l) => l.rule_id), [10]);
   }
-  {
-    const before = [
-      line("row:9", "Nam", "05:00", "13:25", "", 9),
-      line("row:2", "Hùng", "13:25", "19:00", "", 2),
-    ];
-    const { lines, removed } = applyCopiedLines(before, [
-      { driver: "B", start: "08:00", end: "17:00" },
-    ], "");
-    eq("the formula anchor row is kept", lines[0].row, 2);
-    eq("the other row is deleted instead", removed.map((l) => l.row), [9]);
-  }
-
   // The untouched placeholder "+ Thêm ca" leaves behind still goes.
   {
     const before = [line("new:y", "", "", "")];
@@ -331,7 +319,7 @@ console.log("\na copy fills the empty sheet row it was opened from");
 
   // Copying the same rule does not cause a needless sheet write.
   {
-    const before = [{ ...line("row:9", "Nam", "05:00", "13:25", "Target", 9),
+    const before = [{ ...line("rule:9", "Nam", "05:00", "13:25", "Target", 9),
       rule_id: 91, revision: 7, alt_drop_off_id: "old" }];
     const { lines, touched } = applyCopiedLines(before, [
       { driver: "Nam", start: "05:00", end: "13:25", alt_drop_off_id: "new" },
@@ -341,7 +329,7 @@ console.log("\na copy fills the empty sheet row it was opened from");
     eq("target identity and revision survive", [lines[0].rule_id, lines[0].revision], [91, 7]);
     eq("target destination scope survives", lines.map(l => l.dropoff), ["Target", "Target"]);
     eq("single-driver smart copy retains its mode", lines[1].assignment_mode, "smart");
-    ok("an alternative-only edit is marked for Save", touched.includes("row:9") && sig(lines[0]) !== sig(before[0]));
+    ok("an alternative-only edit is marked for Save", touched.includes("rule:9") && sig(lines[0]) !== sig(before[0]));
     for (const alt_drop_off_id of ["", undefined]) {
       eq("blank source clears the target alternative", applyCopiedLines(before, [
         { driver: "Nam", start: "05:00", end: "13:25", alt_drop_off_id },
@@ -349,7 +337,7 @@ console.log("\na copy fills the empty sheet row it was opened from");
     }
   }
   {
-    const before = [line("row:9", "Nam", "05:00", "13:25", "", 9)];
+    const before = [line("rule:9", "Nam", "05:00", "13:25", "", 9)];
     const { lines, touched } = applyCopiedLines(before, [
       { driver: "Nam", start: "05:00", end: "13:25" },
     ], "");
@@ -357,20 +345,13 @@ console.log("\na copy fills the empty sheet row it was opened from");
     eq("…and nothing is reported as copied", touched, []);
   }
   {
-    const before = [line("row:9", "Nam", "05:00", "13:25", "", 9)];
+    const before = [line("rule:9", "Nam", "05:00", "13:25", "", 9)];
     const { lines, touched } = applyCopiedLines(before, [
-      { driver: "Nam", start: "05:00", end: "13:25", sourceRow: 20 },
+      { driver: "Nam", start: "05:00", end: "13:25", sourceRuleId: 20 },
     ], "");
-    eq("an identical visible rule still copies smart_driver_id", lines[0].copyFromRow, 20);
-    eq("the copy is marked for Save", touched, ["row:9"]);
+    eq("an identical visible rule still copies the source rule's settings", lines[0].copyFromRuleId, 20);
+    eq("the copy is marked for Save", touched, ["rule:9"]);
     ok("Save sees the source-cell copy as a change", sig(lines[0]) !== sig(before[0]));
-  }
-  {
-    const before = [line("row:9", "Other", "13:00", "19:00", "", 9)];
-    const { lines } = applyCopiedLines(before, [
-      { driver: "Nam", start: "05:00", end: "13:25", sourceRow: 9 },
-    ], "");
-    eq("copying from the same sheet row needs no format copy", lines[0].copyFromRow, undefined);
   }
 }
 
@@ -382,16 +363,16 @@ console.log("\nthe branch's day as ONE destination sees it");
   // fixed while having nothing to do with it.
   const MEDIC = "SENDOUT2 - D10 - HHao - MEDIC";
   const BIOTEK = "SENDOUT22 - D7 - TXSoan - Nam Khoa Biotek";
-  const at = (row: number, dropoff: string): BranchRule =>
-    ({ row, driver: "Ai đó", start: "05:30", end: "15:15", dropoff }) as BranchRule;
+  const at = (id: number, dropoff: string): BranchRule =>
+    ({ rule_id: id, revision: 1, driver: "Ai đó", start: "05:30", end: "15:15", dropoff }) as BranchRule;
   const branch = [at(1703, MEDIC), at(1702, BIOTEK), at(1700, "")];
 
   const day = servesDropoff(branch, MEDIC);
-  ok("the other destination's rule is dropped", !day.some((r) => r.row === 1702), JSON.stringify(day.map((r) => r.row)));
-  ok("this destination's rule stays", day.some((r) => r.row === 1703));
+  ok("the other destination's rule is dropped", !day.some((r) => r.rule_id === 1702), JSON.stringify(day.map((r) => r.rule_id)));
+  ok("this destination's rule stays", day.some((r) => r.rule_id === 1703));
   // The one that must never be hidden: branch-wide rules DO serve this trip, so
   // they are the rules a new line can genuinely clash with.
-  ok("the branch-wide rule stays", day.some((r) => r.row === 1700));
+  ok("the branch-wide rule stays", day.some((r) => r.rule_id === 1700));
 
   ok("an unknown destination filters nothing", servesDropoff(branch, "").length === 3);
   ok("whitespace is not a destination", servesDropoff(branch, "   ").length === 3);

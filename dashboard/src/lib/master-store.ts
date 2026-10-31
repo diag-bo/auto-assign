@@ -131,13 +131,13 @@ export function uniqueNameId(name:string,items:{id:string;names:string[]}[]):str
   if(matches.length!==1) throw new Error(`Không xác định duy nhất: ${name}`);
   return matches[0].id;
 }
-export async function createMasterConfigRows(cells:ConfigCells[]):Promise<number[]> {
+export async function createMasterConfigRows(cells:ConfigCells[]):Promise<{rule_id:number;revision:number}[]> {
   const [clients,drivers,rules]=await Promise.all([masterClients(),masterDrivers(),masterRules("weekday")]);
   const c=clients.map(c=>({id:c.customer_id,names:[String(c.cartrack.customer_name??"")]}));
   const d=drivers.map(d=>({id:d.driver_id,names:[d.roster?.Driver??"",`${d.cartrack.first_name??""} ${d.cartrack.last_name??""}`.trim()]}));
   const changes=cells.map(cell=>{
     const copied=rules.find(r=>r.id===cell.copyFromRuleId);
-    if(cell.copyFromRow!==undefined && !copied) throw new Error("Chọn lại quy tắc cần sao chép bằng ID");
+    if(cell.copyFromRuleId!==undefined && !copied) throw new Error("Quy tắc cần sao chép đã thay đổi — chọn lại");
     const driver_ids=cell.driver_ids??(cell.driver??"").split(",").map(s=>s.trim()).filter(Boolean).map(n=>uniqueNameId(n,d));
     const change=ruleChange({customer_id:cell.customer_id??uniqueNameId(cell.pickup,c),driver_ids,
       assignment_mode:cell.assignment_mode??(driver_ids.length>1?"smart":copied?.assignment_mode??"fixed"),
@@ -145,5 +145,5 @@ export async function createMasterConfigRows(cells:ConfigCells[]):Promise<number
     if(copied) change.row_data={...copied.row_data,...change.row_data};
     return change;
   });
-  return (await writeMasterRules(changes)).map(r=>r.source_row);
+  return (await writeMasterRules(changes)).map(r=>({rule_id:r.id,revision:r.revision}));
 }

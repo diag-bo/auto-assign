@@ -35,7 +35,7 @@ const rule: MasterRule = { id: 1, source_uid: pickup, source_row: 2, revision: 7
   row_data: { bot_token: "preserve", chat_id: "preserve" }, driver_ids: [driver], smart_driver_id: driver, updated_at: "",
   pickup_customer_id: pickup, dropoff_customer_id: destination, alternate_dropoff_customer_id: null,
   shift_start: "22:00:00", shift_end: "06:00:00", review_issues: [] };
-const line = asLine({ row: 2, driver: "Driver", start: "22:00", end: "06:00", alt_drop_off_id: alternate });
+const line = asLine({ rule_id: 2, revision: 1, driver: "Driver", start: "22:00", end: "06:00", alt_drop_off_id: alternate });
 assert.equal(line.alt_drop_off_id, alternate);
 assert.notEqual(sig(line), sig({ ...line, alt_drop_off_id: "" }));
 assert.equal(applyCopiedLines([line], [{ driver: "New", start: "22:00", end: "06:00" }], "").lines[0].alt_drop_off_id, "");
@@ -90,7 +90,7 @@ try {
   writes.length = 0;
   await assert.rejects(editClient(pickup, { default_dropoff_id: "", eta_minutes: 20 }));
   assert.equal(writes.length, 0);
-  const target = {row:2,expectPickup:"Location",expected:{rule_id:1,revision:7,driver:"Driver",start:"22:00",end:"06:00",dropoff:"Location"}};
+  const target = {expectPickup:"Location",expected:{rule_id:1,revision:7,driver:"Driver",start:"22:00",end:"06:00",dropoff:"Location"}};
   await editMasterConfig(target,{alt_drop_off_id:alternate});
   const changes = () => (writes.at(-1)!.body.changes as Record<string,unknown>[])[0];
   assert.deepEqual(changes(), {id:1,revision:7,assignment_mode:"smart",driver_ids:[driver],pickup_customer_id:pickup,dropoff_customer_id:destination,

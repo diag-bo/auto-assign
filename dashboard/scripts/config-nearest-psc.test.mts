@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { EMPTY_CONFIG_FILTERS, configFilterOptions, filterConfigRows } from "../src/lib/config-filters";
 import type { ConfigRowView } from "../src/app/api/config/rows/route";
-const base: ConfigRowView = { row:1, customer_id:"client", pickup:"Client", driver:"Driver", start:"07:00", end:"20:00", dropoff:"BRA - D001", smart:false };
-const rows = [ {...base, nearest_psc:"BRA - D006"}, {...base,row:2,nearest_psc:"BRA - D015"}, {...base,row:3,nearest_psc:""}, {...base,row:4} ];
-const filter = (patch: Partial<typeof EMPTY_CONFIG_FILTERS>) => filterConfigRows(rows,{...EMPTY_CONFIG_FILTERS,...patch}).map(r=>r.row);
+const base: ConfigRowView = { rule_id:1, revision:1, customer_id:"client", pickup:"Client", driver:"Driver", start:"07:00", end:"20:00", dropoff:"BRA - D001", smart:false };
+const rows = [ {...base, nearest_psc:"BRA - D006"}, {...base,rule_id:2,nearest_psc:"BRA - D015"}, {...base,rule_id:3,nearest_psc:""}, {...base,rule_id:4} ];
+const filter = (patch: Partial<typeof EMPTY_CONFIG_FILTERS>) => filterConfigRows(rows,{...EMPTY_CONFIG_FILTERS,...patch}).map(r=>r.rule_id);
 assert.deepEqual(filter({}),[1,2,3,4]);
 assert.deepEqual(filter({nearestPscs:["BRA - D006"]}),[1]);
 assert.deepEqual(filter({nearestPscs:["BRA - D006","BRA - D015"]}),[1,2]);
@@ -13,5 +13,5 @@ assert.deepEqual(filter({nearestPscOperator:"contains",nearestPscText:"d006"}),[
 assert.deepEqual(filter({nearestPscOperator:"not_contains",nearestPscText:"d006"}),[2,3]);
 assert.deepEqual(filter({nearestPscs:["BRA - D006"],ends:["19:00"]}),[]);
 assert.deepEqual(configFilterOptions(rows).nearestPscs,["","BRA - D006","BRA - D015"]);
-assert.deepEqual(rows.map(r=>r.row),[1,2,3,4]);
+assert.deepEqual(rows.map(r=>r.rule_id),[1,2,3,4]);
 console.log("Nearest PSC selection, blanks, metadata pending, operators and combined filters passed.");

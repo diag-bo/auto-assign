@@ -1,27 +1,11 @@
+// Run: npx tsx scripts/config-row-match.test.mts
 import assert from "node:assert/strict";
-import test from "node:test";
-import { findUniqueConfigRow, parseConfigRowSnapshot } from "../src/lib/config-row-match";
+import { parseConfigRowSnapshot } from "../src/lib/config-row-match";
 
-const original = { driver: "Nguyễn Hồng Quân", start: "07:00", end: "08:00", dropoff: "" };
-const row = (number: number, values = original) => ({ row: number, pickup: "Bệnh viện Thủ Đức", ...values });
-
-test("finds a shifted rule among other shifts for the same pickup", () => {
-  const rows = [
-    row(40, { ...original, start: "08:00", end: "09:00" }),
-    row(41, { ...original, start: "07:00:00" }),
-  ];
-  assert.deepEqual(findUniqueConfigRow(rows, "Bệnh viện Thủ Đức", original), { row: 41 });
-});
-
-test("refuses identical duplicates even if the hinted row still has the same values", () => {
-  assert.deepEqual(findUniqueConfigRow([row(40), row(41)], "Bệnh viện Thủ Đức", original), { reason: "ambiguous" });
-});
-
-test("refuses a changed or removed rule", () => {
-  assert.deepEqual(findUniqueConfigRow([row(40, { ...original, driver: "Tài xế khác" })], "Bệnh viện Thủ Đức", original), { reason: "missing" });
-});
-
-test("snapshot requires the complete old rule", () => {
-  assert.equal(parseConfigRowSnapshot({ driver: "A", start: "07:00", end: "08:00" }), null);
-  assert.deepEqual(parseConfigRowSnapshot(original), original);
-});
+const original = { rule_id: 7, revision: 3, driver: "Nguyễn Văn An", start: "07:00", end: "12:00", dropoff: "" };
+assert.deepEqual(parseConfigRowSnapshot(original), original);
+assert.equal(parseConfigRowSnapshot({ ...original, rule_id: undefined }), null, "a rule is identified by its id");
+assert.equal(parseConfigRowSnapshot({ ...original, revision: "3" }), null, "and its revision");
+assert.equal(parseConfigRowSnapshot({ ...original, driver: 1 }), null);
+assert.equal(parseConfigRowSnapshot(null), null);
+console.log("Config rule snapshots require id + revision.");

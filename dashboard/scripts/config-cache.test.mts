@@ -73,7 +73,7 @@ globalThis.fetch = async (input, init) => {
 };
 
 const payload = (extra = {}) => ({
-  version: 16, gen: "current", day: vnDate(),
+  version: 17, gen: "current", day: vnDate(),
   mappings: [{ customer_id: "cached", driver_id: "cached", smart_driver_id: [], first_name_last_name: "Cached driver" }],
   ...extra,
 });
@@ -89,14 +89,14 @@ try {
   assert.equal((await loadConfig())?.mappings[0].customer_id, "cached");
   assert.equal(dbReads, 0, "A cold instance reuses the shared copy");
 
-  for (const stale of [{ gen: "previous" }, { day: "2000-01-01" }, { version: 15 }, { mappings: [] }]) {
+  for (const stale of [{ gen: "previous" }, { day: "2000-01-01" }, { version: 16 }, { mappings: [] }]) {
     await reset(payload(stale));
     assert.equal((await loadConfig())?.mappings[0].customer_id, "D001");
     assert.equal(dbReads, 1, "Mismatched metadata or an empty cache requires a full read");
     const saved = unpackConfigBlob<{ version: number; gen: string; day: string; mappings: unknown[] }>(store.get(KEY))!;
     assert.equal(saved.gen, "current");
     assert.equal(saved.day, vnDate());
-    assert.equal(saved.version, 16);
+    assert.equal(saved.version, 17);
     assert.deepEqual([...store.keys()].filter(k => k !== "config:gen"), [KEY], "All generations replace one payload key");
   }
 

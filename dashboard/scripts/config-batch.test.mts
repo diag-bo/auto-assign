@@ -26,7 +26,7 @@ assert.ok(!renderToStaticMarkup(createElement(MasterProfileDetails,{driver:{driv
 const driverId = "22222222-2222-4222-8222-222222222222";
 const rule = {id:1,source_row:2,revision:3,assignment_mode:"smart",pickup_customer_id:client.customer_id,dropoff_customer_id:null,alternate_dropoff_customer_id:null,shift_start:"07:00:00",shift_end:"12:00:00",review_issues:[],row_data:{bot_token:"preserved",chat_id:"preserved"},master_rule_drivers:[{driver_id:driverId,selection_order:0}]};
 const expected = {rule_id:1,revision:3,driver:"Driver",start:"07:00",end:"12:00",dropoff:""};
-const line = {row:2,expected_row:expected,driver:"Driver",start:"07:00",end:"12:00",dropoff:"",assignment_mode:"smart"};
+const line = {expected_row:expected,driver:"Driver",start:"07:00",end:"12:00",dropoff:"",assignment_mode:"smart"};
 const previousFetch = globalThis.fetch;
 const previousEnv = {SUPABASE_URL:process.env.SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY:process.env.SUPABASE_SERVICE_ROLE_KEY,};
 Object.assign(process.env,{SUPABASE_URL:"https://supabase.invalid",SUPABASE_SERVICE_ROLE_KEY:"test"});
@@ -54,17 +54,17 @@ try {
     await assert.rejects(saveMasterConfigBatch([{pickup_name:"Pickup",rows,removed:[]}]));
     assert.equal(writes.length,count,"invalid batch must not write anything");
   }
-  await saveMasterConfigBatch([{pickup_name:"Pickup",rows:[{driver:"Driver",start:"08:00",end:"18:00",dropoff:"",assignment_mode:"fixed"}],removed:[{row:2,expected_row:expected}]}]);
+  await saveMasterConfigBatch([{pickup_name:"Pickup",rows:[{driver:"Driver",start:"08:00",end:"18:00",dropoff:"",assignment_mode:"fixed"}],removed:[{expected_row:expected}]}]);
   assert.equal(writes.at(-1)?.changes[1].active,false);
-  await bulkMasterConfig([{row:2,expectPickup:"Pickup",expected}],{driverName:"Driver",start:"08:00",end:"18:00"});
+  await bulkMasterConfig([{expectPickup:"Pickup",expected}],{driverName:"Driver",start:"08:00",end:"18:00"});
   assert.equal(writes.at(-1)?.changes[0].shift_start,"08:00");
   assert.equal(writes.at(-1)?.changes[0].assignment_mode,"smart");
-  const rows=[{row:2,pickup_name:"Pickup",expected_row:expected}];
+  const rows=[{pickup_name:"Pickup",expected_row:expected}];
   const request=(body:Record<string,unknown>)=>new NextRequest("https://dashboard.invalid/api/config/bulk-update",{method:"POST",body:JSON.stringify({rows,config_day:"weekday",...body})});
   assert.equal((await bulkUpdate(request({shift_start:"",shift_end:"20:00"}))).status,200);
   assert.equal(writes.at(-1)?.changes[0].shift_start,"07:00","end-only API update keeps the existing start");
   assert.equal(writes.at(-1)?.changes[0].shift_end,"20:00");
-  await bulkMasterConfig([{row:2,expectPickup:"Pickup",expected}],{start:"08:00"});
+  await bulkMasterConfig([{expectPickup:"Pickup",expected}],{start:"08:00"});
   assert.equal(writes.at(-1)?.changes[0].shift_end,"12:00","start-only update keeps the existing end");
   const beforeInvalid=writes.length;
   for(const body of [{},{shift_end:"29:00"},{shift_end:2000},{shift_start:"20:00",shift_end:"20:00"}]) {
@@ -72,21 +72,21 @@ try {
   }
   assert.equal(writes.length,beforeInvalid);
   extraRules=[{...rule,id:3,source_row:4,pickup_customer_id:driverId,shift_start:"16:45:00"}];
-  await bulkMasterConfig([{row:2,expectPickup:"Pickup",expected},{row:4,expectPickup:"Other",expected:{...expected,rule_id:3,start:"16:45"}}],{end:"20:00"});
+  await bulkMasterConfig([{expectPickup:"Pickup",expected},{expectPickup:"Other",expected:{...expected,rule_id:3,start:"16:45"}}],{end:"20:00"});
   assert.deepEqual(writes.at(-1)?.changes.map(c=>[c.shift_start,c.shift_end]),[["07:00","20:00"],["16:45","20:00"]]);
   extraRules=[];
-  const stale=await bulkMasterConfig([{row:2,expectPickup:"Pickup",expected:{...expected,revision:2}}],{end:"20:00"});
+  const stale=await bulkMasterConfig([{expectPickup:"Pickup",expected:{...expected,revision:2}}],{end:"20:00"});
   assert.equal(stale.done.length,0);assert.equal(stale.skipped.length,1);
   rule.shift_start="";rule.shift_end="";
-  const allDay=await bulkMasterConfig([{row:2,expectPickup:"Pickup",expected}],{end:"20:00"});
+  const allDay=await bulkMasterConfig([{expectPickup:"Pickup",expected}],{end:"20:00"});
   assert.equal(allDay.done.length,0,"an all-day row must not become a half-specified shift");
   assert.equal(allDay.skipped.length,1);
   rule.shift_start="07:00:00";rule.shift_end="12:00:00";
   addPeer=true;
   const count=writes.length;
-  await assert.rejects(bulkMasterConfig([{row:2,expectPickup:"Pickup",expected}],{driverName:"Driver",start:"08:00",end:"13:00"}),/trùng giờ/);
+  await assert.rejects(bulkMasterConfig([{expectPickup:"Pickup",expected}],{driverName:"Driver",start:"08:00",end:"13:00"}),/trùng giờ/);
   assert.equal(writes.length,count,"overlap with unselected shifts must reject the write");
-  await assert.rejects(bulkMasterConfig([{row:2,expectPickup:"Pickup",expected}],{end:"13:00"}),/trùng giờ/);
+  await assert.rejects(bulkMasterConfig([{expectPickup:"Pickup",expected}],{end:"13:00"}),/trùng giờ/);
   assert.equal(writes.length,count,"end-only edits must check overlap with unselected shifts too");
   await assert.rejects(saveMasterConfigBatch([{pickup_name:"Pickup",pickup_customer_id:driverId,rows:[line],removed:[]}]),/Điểm lấy đã thay đổi/);
   console.log("Config batch, hover metadata, stale/invalid rejection and credential preservation checks passed");

@@ -31,18 +31,18 @@ const eq = (label: string, got: unknown, want: unknown) =>
     `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
 
 const row = (o: Partial<ConfigRowView>): ConfigRowView => ({
-  row: 2, customer_id: "", pickup: "", driver: "", start: "", end: "", dropoff: "", smart: false, ...o,
+  rule_id: 2, revision: 1, customer_id: "", pickup: "", driver: "", start: "", end: "", dropoff: "", smart: false, ...o,
 });
 
 const ROWS: ConfigRowView[] = [
-  row({ row: 10, customer_id: "D014", pickup: "BRA - D014 - Quận 1", driver: "F - C - DC100320 Lý Chánh Hùng", start: "05:00", end: "13:25" }),
-  row({ row: 11, customer_id: "D014", pickup: "BRA - D014 - Quận 1", driver: "F - C - DC100777 Nguyễn Hồng Sơn", start: "13:25", end: "19:00" }),
-  row({ row: 12, customer_id: "D002", pickup: "BRA - D002 - NTrai", driver: "P - P - PT101147 Nguyễn Hữu Quỳnh", start: "07:00", end: "16:00" }),
-  row({ row: 13, customer_id: "D037", pickup: "PS315 Nguyễn Thị Định", driver: "", start: "", end: "" }),
-  row({ row: 14, customer_id: "D021", pickup: "BRA - D021 - TBinh", driver: "A, B", start: "06:00", end: "18:00", smart: true }),
+  row({ rule_id: 10, customer_id: "D014", pickup: "BRA - D014 - Quận 1", driver: "F - C - DC100320 Lý Chánh Hùng", start: "05:00", end: "13:25" }),
+  row({ rule_id: 11, customer_id: "D014", pickup: "BRA - D014 - Quận 1", driver: "F - C - DC100777 Nguyễn Hồng Sơn", start: "13:25", end: "19:00" }),
+  row({ rule_id: 12, customer_id: "D002", pickup: "BRA - D002 - NTrai", driver: "P - P - PT101147 Nguyễn Hữu Quỳnh", start: "07:00", end: "16:00" }),
+  row({ rule_id: 13, customer_id: "D037", pickup: "PS315 Nguyễn Thị Định", driver: "", start: "", end: "" }),
+  row({ rule_id: 14, customer_id: "D021", pickup: "BRA - D021 - TBinh", driver: "A, B", start: "06:00", end: "18:00", smart: true }),
 ];
 
-const found = (q: string) => searchConfigRows(ROWS, q).map((r) => r.row);
+const found = (q: string) => searchConfigRows(ROWS, q).map((r) => r.rule_id);
 
 console.log("finding a row");
 eq("an empty query is everything, not nothing", searchConfigRows(ROWS, "").length, ROWS.length);
@@ -76,17 +76,17 @@ eq("nothing matches gibberish", found("zzzz"), []);
 // sheet a substring match drags in.
 {
   const CUCHI = row({
-    row: 20, customer_id: "17347",
+    rule_id: 20, customer_id: "17347",
     pickup: "17347 - CChi - NVHoai - Bệnh Viện Đa Khoa Khu Vực Củ Chi",
     driver: "Trần Nguyễn Thanh Duy, Phan Thanh Nghĩa", start: "05:00", end: "15:30",
   });
   const AINGHIA = row({
-    row: 21, customer_id: "12702",
+    rule_id: 21, customer_id: "12702",
     pickup: "12702 - BHoa - DKhoi - PHÒNG KHÁM ĐA KHOA ÁI NGHĨA ĐỒNG KHỞI",
     driver: "Nguyễn Minh Nhật", start: "07:00", end: "16:00",
   });
   const both = [CUCHI, AINGHIA];
-  const hits = (q: string) => searchConfigRows(both, q).map((r) => r.row);
+  const hits = (q: string) => searchConfigRows(both, q).map((r) => r.rule_id);
 
   eq("the branch asked for, and only it", hits("đa khoa ái nghĩa"), [21]);
   eq("...typed without accents too", hits("da khoa ai nghia"), [21]);
@@ -108,13 +108,13 @@ console.log("dashboard phrase and facet filters");
   const VIET_PHI = "F - C - DC100002 Nguyễn Viết Phi";
   const THANH_AN = "P - P - PT100003 Trần Thanh An";
   const FILTER_ROWS = [
-    row({ row: 30, customer_id: "D030", pickup: "Kho Trung Tâm", driver: HOANG_PHI, start: "05:00", end: "13:00", dropoff: "Bệnh viện Quận 1" }),
-    row({ row: 31, customer_id: "D031", pickup: "Điểm Hoàng Gia", driver: VIET_PHI, start: "13:00", end: "21:00", dropoff: "Bệnh viện Quận 2" }),
-    row({ row: 32, customer_id: "D032", pickup: "Kho Miền Đông", driver: `${VIET_PHI}, ${THANH_AN}`, start: "07:00", end: "16:00", dropoff: "", smart: true }),
-    row({ row: 33, customer_id: "D033", pickup: "Kho Miền Tây", driver: THANH_AN, start: "08:00", end: "17:00", dropoff: "Phòng khám An Bình" }),
+    row({ rule_id: 30, customer_id: "D030", pickup: "Kho Trung Tâm", driver: HOANG_PHI, start: "05:00", end: "13:00", dropoff: "Bệnh viện Quận 1" }),
+    row({ rule_id: 31, customer_id: "D031", pickup: "Điểm Hoàng Gia", driver: VIET_PHI, start: "13:00", end: "21:00", dropoff: "Bệnh viện Quận 2" }),
+    row({ rule_id: 32, customer_id: "D032", pickup: "Kho Miền Đông", driver: `${VIET_PHI}, ${THANH_AN}`, start: "07:00", end: "16:00", dropoff: "", smart: true }),
+    row({ rule_id: 33, customer_id: "D033", pickup: "Kho Miền Tây", driver: THANH_AN, start: "08:00", end: "17:00", dropoff: "Phòng khám An Bình" }),
   ];
   const hits = (partial: Partial<typeof EMPTY_CONFIG_FILTERS>) =>
-    filterConfigRows(FILTER_ROWS, { ...EMPTY_CONFIG_FILTERS, ...partial }).map((r) => r.row);
+    filterConfigRows(FILTER_ROWS, { ...EMPTY_CONFIG_FILTERS, ...partial }).map((r) => r.rule_id);
 
   eq("an empty dashboard filter returns every row", hits({}), [30, 31, 32, 33]);
   eq("default driver filter selects exact names", hits({ drivers: [VIET_PHI] }), [31, 32]);
@@ -157,14 +157,14 @@ console.log("dashboard phrase and facet filters");
   eq("comparison ignores previous multi-selections", hits({startOperator:"gt",startText:"07:00",starts:["05:00"]}),[31,33]);
   eq("invalid comparison time matches nothing", hits({startOperator:"lt",startText:"99:00"}),[]);
   eq("comparison excludes blank and malformed boundaries",filterConfigRows([
-    row({row:40}),row({row:41,start:"bad"}),row({row:42,start:"7:05"}),row({row:43,start:"24:01"}),
-  ],{...EMPTY_CONFIG_FILTERS,startOperator:"gt",startText:"07:00"}).map(r=>r.row),[42]);
+    row({rule_id:40}),row({rule_id:41,start:"bad"}),row({rule_id:42,start:"7:05"}),row({rule_id:43,start:"24:01"}),
+  ],{...EMPTY_CONFIG_FILTERS,startOperator:"gt",startText:"07:00"}).map(r=>r.rule_id),[42]);
   eq("24:00 is later than 23:59",filterConfigRows([
-    row({row:44,end:"00:00"}),row({row:45,end:"24:00"}),row({row:46,end:"23:59"}),
-  ],{...EMPTY_CONFIG_FILTERS,endOperator:"gt",endText:"23:59"}).map(r=>r.row),[45]);
-  eq("blank shift times can be selected", filterConfigRows([...FILTER_ROWS, row({ row: 34 })], {
+    row({rule_id:44,end:"00:00"}),row({rule_id:45,end:"24:00"}),row({rule_id:46,end:"23:59"}),
+  ],{...EMPTY_CONFIG_FILTERS,endOperator:"gt",endText:"23:59"}).map(r=>r.rule_id),[45]);
+  eq("blank shift times can be selected", filterConfigRows([...FILTER_ROWS, row({ rule_id: 34 })], {
     ...EMPTY_CONFIG_FILTERS, startOperator: "is", starts: [""], endOperator: "is", ends: [""],
-  }).map((r) => r.row), [34]);
+  }).map((r) => r.rule_id), [34]);
   eq("empty text does not activate a negative operator", hits({ driverOperator: "not_contains" }), [30, 31, 32, 33]);
   eq("is not without selections is inactive", hits({ driverOperator: "is_not" }), [30, 31, 32, 33]);
   eq("selected values are inactive in contains mode", hits({ driverOperator: "contains", drivers: [HOANG_PHI], driverText: "viết phi" }), [31, 32]);
@@ -176,7 +176,7 @@ console.log("dashboard phrase and facet filters");
     { ...FILTER_ROWS[2], default_dropoff: "" },
     FILTER_ROWS[3], // Metadata unavailable, not a verified blank.
   ];
-  const profileHits = (partial: Partial<typeof EMPTY_CONFIG_FILTERS>) => filterConfigRows(profileRows, { ...EMPTY_CONFIG_FILTERS, ...partial }).map(r => r.row);
+  const profileHits = (partial: Partial<typeof EMPTY_CONFIG_FILTERS>) => filterConfigRows(profileRows, { ...EMPTY_CONFIG_FILTERS, ...partial }).map(r => r.rule_id);
   eq("default dropoff uses client metadata, not the rule destination", profileHits({defaultDropoffs:["BRA - D001"]}), [30]);
   eq("blank default excludes unavailable metadata", profileHits({defaultDropoffs:[""]}), [32]);
   eq("default dropoff supports contains", profileHits({defaultDropoffOperator:"contains",defaultDropoffText:"d006"}), [31]);

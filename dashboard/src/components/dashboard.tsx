@@ -188,7 +188,7 @@ export function Dashboard() {
         setDoneKeys((prev) => {
           if (prev.size === 0) return prev;
           const live = new Set<string>([
-            ...(nextUnfinished ?? []).map((u) => `u:${u.row}`),
+            ...(nextUnfinished ?? []).map((u) => `u:${u.rule_id}`),
             ...(nextGaps ?? []).map((g) => `g:${g.customer_id}|${g.at}`),
             ...(nextOverlaps ?? []).map((o) => `o:${overlapKey(o)}`),
           ]);
@@ -623,7 +623,7 @@ export function Dashboard() {
     }
   }, [syncSettings]);
 
-  const visibleUnfinished = unfinished.filter((u) => !doneKeys.has(`u:${u.row}`));
+  const visibleUnfinished = unfinished.filter((u) => !doneKeys.has(`u:${u.rule_id}`));
   const visibleGaps = gaps.filter((g) => !doneKeys.has(`g:${g.customer_id}|${g.dropoff_name ?? ""}|${g.at}`));
   const visibleOverlaps = overlaps.filter((o) => !doneKeys.has(`o:${overlapKey(o)}`));
 

@@ -13,11 +13,11 @@ export function weekdayOnly(day?: unknown) {
   if (resolveConfigDay(day) === "sunday") throw new Error("Chủ nhật: sửa khu vực ở tab Chủ nhật, không sửa từng dòng");
 }
 
-type Target={row:number;expectPickup:string;expected?:ConfigRowSnapshot};
+type Target={expectPickup:string;expected:ConfigRowSnapshot};
 type Patch={driverName?:string;driver_ids?:string[];assignment_mode?:AssignmentMode;start?:string;end?:string;dropoff?:string;alt_drop_off_id?:string};
 function targetRule(target:Target,rules:MasterRule[]) {
-  const old=rules.find(r=>r.id===target.expected?.rule_id);
-  if(!old || old.revision!==target.expected?.revision) throw new Error("Dòng đã thay đổi — tải lại trước khi lưu");
+  const old=rules.find(r=>r.id===target.expected.rule_id);
+  if(!old || old.revision!==target.expected.revision) throw new Error("Dòng đã thay đổi — tải lại trước khi lưu");
   return old;
 }
 async function context(ids?:number[],pickupIds?:string[],copyIds?:number[]) {
@@ -53,22 +53,22 @@ function checkSchedule(ctx:Awaited<ReturnType<typeof context>>,changes:Record<st
   }
 }
 export async function editMasterConfig(target:Target,patch:Patch|{delete:true}) {
-  const ctx=await context([target.expected?.rule_id ?? 0]),old=targetRule(target,ctx.rules);
+  const ctx=await context([target.expected.rule_id]),old=targetRule(target,ctx.rules);
   const [saved]=await writeMasterRules(["delete" in patch?{id:old.id,revision:old.revision,active:false}:change(old,patch,ctx)]);
-  return {row:saved.source_row,rule_id:saved.id,revision:saved.revision,moved:saved.source_row!==target.row};
+  return {rule_id:saved.id,revision:saved.revision};
 }
 export async function bulkMasterConfig(targets:Target[],patch:Patch|{delete:true}) {
   const withHours=!("delete" in patch) && (patch.start!==undefined || patch.end!==undefined);
-  const ctx=await context(withHours ? undefined : targets.map(t=>t.expected?.rule_id ?? 0));
-  const done:{row:number;pickup:string}[]=[],skipped:{row:number;pickup:string;reason:string}[]=[],changes:Record<string,unknown>[]=[];
+  const ctx=await context(withHours ? undefined : targets.map(t=>t.expected.rule_id));
+  const done:{rule_id:number;pickup:string}[]=[],skipped:{rule_id:number;pickup:string;reason:string}[]=[],changes:Record<string,unknown>[]=[];
   const seen=new Set<number>();
   for(const target of targets) {
     try {
       const old=targetRule(target,ctx.rules);
       if(seen.has(old.id)) continue;
       const value="delete" in patch?{id:old.id,revision:old.revision,active:false}:change(old,patch,ctx);
-      seen.add(old.id);changes.push(value);done.push({row:old.source_row,pickup:target.expectPickup});
-    } catch(e) {skipped.push({row:target.row,pickup:target.expectPickup,reason:String(e)});}
+      seen.add(old.id);changes.push(value);done.push({rule_id:old.id,pickup:target.expectPickup});
+    } catch(e) {skipped.push({rule_id:target.expected.rule_id,pickup:target.expectPickup,reason:String(e)});}
   }
   if(changes.length) {
     if(withHours) checkSchedule(ctx,changes);
@@ -77,11 +77,11 @@ export async function bulkMasterConfig(targets:Target[],patch:Patch|{delete:true
   return {done,skipped};
 }
 export async function replaceMasterConfig(opts:{from:string;to:string;from_driver_id?:string;to_driver_id?:string;targets:Target[]}) {
-  const ctx=await context(opts.targets.map(t=>t.expected?.rule_id ?? 0));
+  const ctx=await context(opts.targets.map(t=>t.expected.rule_id));
   const from=opts.from_driver_id??uniqueNameId(opts.from,ctx.drivers),to=opts.to_driver_id??uniqueNameId(opts.to,ctx.drivers);
   if (!UUID.test(from) || !UUID.test(to) || !ctx.drivers.some(d=>d.id===from) || !ctx.drivers.some(d=>d.id===to && d.active)) throw new Error("Tài xế không hợp lệ hoặc đã ngừng hoạt động — chọn lại tài xế");
   if (from===to) throw new Error("Hai tài xế trùng nhau");
-  const replaced:{row:number;pickup:string;before:string;after:string}[]=[],skipped:{row:number;pickup:string;reason:string}[]=[],changes:Record<string,unknown>[]=[];
+  const replaced:{rule_id:number;pickup:string;before:string;after:string}[]=[],skipped:{rule_id:number;pickup:string;reason:string}[]=[],changes:Record<string,unknown>[]=[];
   const seen=new Set<number>();
   for(const target of opts.targets) {
     try {
@@ -90,9 +90,9 @@ export async function replaceMasterConfig(opts:{from:string;to:string;from_drive
       if(!old.driver_ids.includes(from)) throw new Error("Dòng không còn tài xế này");
       const ids=[...new Set(old.driver_ids.map(id=>id===from?to:id))];
       changes.push(change(old,{driver_ids:ids},ctx));seen.add(old.id);
-      const before=target.expected?.driver??"";
-      replaced.push({row:old.source_row,pickup:target.expectPickup,before,after:replaceDriverInCell(before,opts.from,opts.to)??opts.to});
-    } catch(e) {skipped.push({row:target.row,pickup:target.expectPickup,reason:String(e)});}
+      const before=target.expected.driver;
+      replaced.push({rule_id:old.id,pickup:target.expectPickup,before,after:replaceDriverInCell(before,opts.from,opts.to)??opts.to});
+    } catch(e) {skipped.push({rule_id:target.expected.rule_id,pickup:target.expectPickup,reason:String(e)});}
   }
   let scheduled_replaced=0;
   if(changes.length) {
@@ -120,8 +120,7 @@ export async function saveMasterConfigBatch(branches: unknown) {
       if (!line || [line.driver,line.start,line.end,line.dropoff].some(v => typeof v !== "string")) throw new Error("Thông tin dòng không hợp lệ");
       const expected = line.expected_row === undefined ? undefined : parseConfigRowSnapshot(line.expected_row);
       if (line.expected_row !== undefined && !expected) throw new Error("Thông tin dòng cũ không hợp lệ");
-      const old = expected ? targetRule({row:line.row,expectPickup:branch.pickup_name,expected},ctx.rules) : undefined;
-      if (line.row !== undefined && !old) throw new Error("Dòng đã thay đổi — tải lại trước khi lưu");
+      const old = expected ? targetRule({expectPickup:branch.pickup_name,expected},ctx.rules) : undefined;
       if (old && (old.pickup_customer_id !== pickupId || seen.has(old.id))) throw new Error("Dòng không thuộc điểm lấy hoặc bị lặp");
       if (old) seen.add(old.id);
       const ids = line.driver.split(",").map((n:string)=>n.trim()).filter(Boolean).map((n:string)=>uniqueNameId(n,ctx.drivers));
@@ -136,7 +135,7 @@ export async function saveMasterConfigBatch(branches: unknown) {
     for (const removed of branch.removed) {
       const expected = parseConfigRowSnapshot(removed?.expected_row);
       if (!expected) throw new Error("Thông tin dòng cần xoá không hợp lệ");
-      const old = targetRule({row:removed.row,expectPickup:branch.pickup_name,expected},ctx.rules);
+      const old = targetRule({expectPickup:branch.pickup_name,expected},ctx.rules);
       if (old.pickup_customer_id !== pickupId || seen.has(old.id)) throw new Error("Dòng cần xoá không thuộc điểm lấy hoặc bị lặp");
       seen.add(old.id); changes.push({id:old.id,revision:old.revision,active:false});
     }

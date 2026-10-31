@@ -23,21 +23,20 @@ export const preferredRegion = "sin1";
  * most of the time.
  *
  * It also does NOT go through loadConfig. That returns the parsed
- * Mapping, which by design carries no sheet row and no branch NAME — a row
- * number on all 1,700 would grow the cached blob to label a handful. Browsing
- * needs exactly those two things, so this reads the tab on its own and keeps a
- * slim copy.
+ * Mapping, which by design carries no rule id and no branch NAME. Browsing needs
+ * exactly those two things, so this reads the rules on its own and keeps a slim
+ * copy.
  *
  * Defaults to today; an explicit day browses the other roster without changing
  * the operational engine.
  */
 
 export interface ConfigRowView {
-  rule_id?: number;
-  revision?: number;
+  /** Identifies the rule for every edit; a save is refused if `revision` moved.
+   *  A display-only unmapped client carries a negative placeholder id. */
+  rule_id: number;
+  revision: number;
   assignment_mode?: "fixed" | "smart";
-  /** 1-based sheet row, so an edit elsewhere can address it. */
-  row: number;
   customer_id: string;
   pickup: string;
   /** The Driver cell verbatim — one name, or several for a smart row. */
@@ -125,7 +124,7 @@ export async function GET(req: NextRequest) {
 
     const raw = await masterRuleRows(day);
     const rows: ConfigRowView[] = [];
-    raw.forEach((r, idx) => {
+    raw.forEach((r) => {
       const pickup = (r["Điểm Pick-up"] ?? "").trim();
       const customer_id = (r["customer_id"] ?? "").trim();
       // A row with neither is an empty line inside the table — the space new
@@ -133,8 +132,7 @@ export async function GET(req: NextRequest) {
       if (!pickup && !customer_id) return;
       const driver = (r["Driver"] ?? "").trim();
       rows.push({
-        ...(r._rule_id ? {rule_id:Number(r._rule_id),revision:Number(r._revision),assignment_mode:r.assignment_mode as "fixed"|"smart"} : {}),
-        row: idx + 2,
+        rule_id: Number(r._rule_id), revision: Number(r._revision), assignment_mode: r.assignment_mode as "fixed"|"smart",
         customer_id,
         pickup,
         driver,

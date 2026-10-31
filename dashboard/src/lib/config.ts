@@ -214,7 +214,8 @@ async function loadConfigAt(now: Date): Promise<Config | null> {
   const sunday = vnIsSunday(now);
   // Sunday rules carry areas; the weekly roster (Lịch Chủ nhật) says who drives
   // each area — see masterRules.
-  const version = 16;
+  // 17: to-dos, branch rules, gaps and overlaps carry the rule id, not a row number.
+  const version = 17;
   // Read once and reuse for the write below, so a hit costs exactly one Redis GET.
   const gen = await readGen();
   if (cachedConfig && cachedDay === today && (gen === null || gen === cachedGen)) {
@@ -274,7 +275,7 @@ async function loadConfigAt(now: Date): Promise<Config | null> {
     const rulesByCustomer = new Map<string, RuleRow[]>();
     // Rows in the shape the overlap check wants. See the push below.
     const auditRows: AuditableRow[] = [];
-    for (const [idx, row] of rows.entries()) {
+    for (const row of rows) {
       const customer_id = row["customer_id"] ?? "";
       const driver_id = (row["driver_id"] ?? "").trim();
       // Drop junk smart-driver entries so they can never build a malformed
@@ -328,8 +329,8 @@ async function loadConfigAt(now: Date): Promise<Config | null> {
             .filter((g) => g.customer_id === customer_id && (!todoDropoff || g.dropoff_name === todoDropoff))
             .map((g) => g.at);
           if (looksAutoCreated(window) || missingTimes.length > 0) {
-            unfinished.push({ row: idx + 2, customer_id, pickup_name: pickupName, dropoff_name: todoDropoff, window, missingTimes,
-              ...(row._rule_id ? {rule_id:Number(row._rule_id),revision:Number(row._revision),assignment_mode:row.assignment_mode as "fixed"|"smart"} : {}) });
+            unfinished.push({ rule_id:Number(row._rule_id), revision:Number(row._revision), assignment_mode:row.assignment_mode as "fixed"|"smart",
+              customer_id, pickup_name: pickupName, dropoff_name: todoDropoff, window, missingTimes });
           }
         }
         continue;
@@ -337,8 +338,8 @@ async function loadConfigAt(now: Date): Promise<Config | null> {
 
       const rules = rulesByCustomer.get(customer_id);
       const thisRule: RuleRow = {
-        ...(row._rule_id ? {rule_id:Number(row._rule_id),revision:Number(row._revision),assignment_mode:row.assignment_mode as "fixed"|"smart"} : {}),
-        row: idx + 2, driver: driverName,
+        rule_id:Number(row._rule_id), revision:Number(row._revision), assignment_mode:row.assignment_mode as "fixed"|"smart",
+        driver: driverName,
         start: parseTime(row["shift_start"]), end: parseTime(row["shift_end"]),
         dropoff: dropoffName,
       };
@@ -356,7 +357,6 @@ async function loadConfigAt(now: Date): Promise<Config | null> {
         shift_start: thisRule.start,
         shift_end: thisRule.end,
         dropoff_id: (row["dropoff_id"] ?? "").trim(),
-        row: thisRule.row,
       });
 
       mappings.push({
@@ -441,7 +441,7 @@ async function loadConfigAt(now: Date): Promise<Config | null> {
         ...overlaps.map((o) => o.customer_id),
       ])) {
         branchRules[cid] = (rulesByCustomer.get(cid) ?? []).map((r) => ({
-          row: r.row, driver: r.driver, start: hhmm(r.start), end: hhmm(r.end),
+          driver: r.driver, start: hhmm(r.start), end: hhmm(r.end),
           rule_id:r.rule_id,revision:r.revision,assignment_mode:r.assignment_mode,
           dropoff: r.dropoff,
         }));

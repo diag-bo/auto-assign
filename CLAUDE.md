@@ -74,8 +74,9 @@ app's Google service account can no longer open the workbook anyway.
 
 Config and leave keep a Redis L2 copy (`config:parsed`; leave `leave:master:v1:entries`),
 so a cold instance reads Redis first, not Supabase. Records are matched by id +
-revision, never by row number: a `row` still travels with config rows and to-dos as
-the screens' handle, but nothing writes by it. Some sections below were written for
+revision, never by row number: config rules, to-dos, gaps and overlaps all carry
+`rule_id` + `revision`, and every config route takes an `expected_row` snapshot
+carrying both (`parseConfigRowSnapshot` refuses one without). Some sections below were written for
 the sheet and still say "row" or "tab" — read them as "record"; the RULES they describe
 (duplicate check, tombstones, automated-only blocking, whole-day twin, overlap = CLASH)
 are unchanged. PSC routes and PSC closing hours are hard-coded in `psc-routes-data.ts`.
@@ -283,9 +284,9 @@ ever named, which is how a warning stops being read.
 | `POST /api/assign` | Main assign cycle; `?env=prod\|uat`, `?skipSmart=1` |
 | `GET /api/config` | Returns mapping/PSC route counts. `?refresh=1` (the Refresh buttons, morning sync) first busts every config/leave/driver cache and bumps the shared stamp; a plain GET only reads — busting on every dashboard page open forced every instance, the cron engine included, to re-parse the config |
 | `GET /api/config/rows` | The config table itself, for the dashboard's Config tab and the copy-a-branch picker. NOT on the status poll — ~1,700 rows, fetched on demand behind a 5-min in-process cache |
-| `POST /api/config/delete-row` | Deletes one config row. Weekday only; refuses row 2 (the id ARRAYFORMULA anchor) and read-back-checks the spill afterwards |
+| `POST /api/config/delete-row` | Switches off one config rule (history kept), by `expected_row` (rule id + revision). Weekday only |
 | `POST /api/config/replace-driver` | Config tab's "Thay tài xế": swaps driver A for B on the ticked rows, NAME BY NAME (a smart row keeps its other candidates; hours and destination untouched). Weekday only; `to` must be on the roster, `from` need not be (a driver who left). One write + one cache bump for the whole set, each rule re-checked by id + revision |
-| `POST /api/config/bulk-update` / `bulk-delete` | Config tab's bulk "Đổi tài xế" / "Đổi ca" / "Xoá" on ticked rows. ONE header read + ONE column read + ONE write for the whole selection, each row's branch re-checked in memory and skipped (not written) if it moved; deletes go highest-row-first in one atomic batch, row 2 refused. Replaced a loop of per-row `complete-row`/`delete-row` calls that hit Google's 60-reads/min/user quota after ~25 rows (~15 for deletes) and failed the rest with 429. `scripts/config-bulk-write.test.mts` |
+| `POST /api/config/bulk-update` / `bulk-delete` | Config tab's bulk "Đổi tài xế" / "Đổi ca" / "Xoá" on ticked rules. One write for the whole selection (`bulkMasterConfig`); a rule whose revision moved is skipped and listed, not written. Weekday only |
 | `GET /api/drivers` | Proxy to Cartrack drivers list |
 | `POST /api/psc-assign` | PSC sample-transport job creation (creates unassigned job; auto-assign picks it up) |
 | `GET /api/psc-routes` | PSC routes (pickup→dropoff pairs with GPS coords) from the hard-coded `psc-routes-data.ts` |

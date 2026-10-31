@@ -5,7 +5,6 @@ import { weekdayOnly } from "@/lib/master-config-actions";
 import { splitDriverNames, DRIVER_SEP } from "@/lib/driver-cell";
 import { loadDrivers, invalidateConfigCache } from "@/lib/config";
 import { timeToMins } from "@/lib/time";
-import { sbSelect } from "@/lib/supabase-rest";
 
 /**
  * Close an uncovered hour by SPLITTING it out into its own rule, rather than
@@ -49,10 +48,9 @@ export async function POST(req: NextRequest) {
     if (!body || typeof body !== "object") return bad("Body không hợp lệ");
     weekdayOnly(resolveConfigDay(body.config_day));
     if (body.alt_drop_off_id !== undefined && typeof body.alt_drop_off_id !== "string") return bad("Điểm giao thay thế không hợp lệ");
-    const { pickup_name, dropoff_name, driver_name, shift_start, shift_end, copy_from_row } = body as {
+    const { pickup_name, dropoff_name, driver_name, shift_start, shift_end } = body as {
       pickup_name?: string; dropoff_name?: string; driver_name?: string;
       shift_start?: string; shift_end?: string;
-      copy_from_row?: number;
     };
 
     const pickup = (pickup_name ?? "").trim();
@@ -75,14 +73,13 @@ export async function POST(req: NextRequest) {
     const unknown = names.find((n) => !drivers.some((d) => d.name === n));
     if (unknown) return bad(`"${unknown}" không có trong danh sách tài xế — chọn từ danh sách`);
 
-    const [row] = await createMasterConfigRows([
-      { pickup, dropoff: (dropoff_name ?? "").trim(), start, end, driver: names.join(DRIVER_SEP), copyFromRow: copy_from_row,
+    const [saved] = await createMasterConfigRows([
+      { pickup, dropoff: (dropoff_name ?? "").trim(), start, end, driver: names.join(DRIVER_SEP),
         copyFromRuleId:body.copy_from_rule_id,assignment_mode:body.assignment_mode,driver_ids:body.driver_ids,alt_drop_off_id:body.alt_drop_off_id },
     ]);
     await invalidateConfigCache();
 
-    const meta=(await sbSelect<{id:number;revision:number}>("master_config_rules",`select=id,revision&day_type=eq.weekday&active=eq.true&source_row=eq.${row}`))[0];
-    return NextResponse.json({ ok: true, row, ...(meta?{rule_id:meta.id,revision:meta.revision}:{}) });
+    return NextResponse.json({ ok: true, ...saved });
   } catch (e) {
     return bad(e instanceof Error ? e.message : String(e), 409);
   }

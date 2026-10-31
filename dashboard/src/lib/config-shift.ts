@@ -35,6 +35,7 @@ export function insideBusy(t: string, busy: readonly [string, string][]): boolea
 /** A line as the editor holds it while being worked on. */
 export interface Line {
   alt_drop_off_id?: string;
+  /** The saved rule this line edits, or undefined for one being added. */
   rule_id?: number;
   revision?: number;
   assignment_mode?: "fixed" | "smart";
@@ -42,29 +43,22 @@ export interface Line {
   /**
    * Stable identity for one line within a single editing session.
    *
-   * Deliberately NOT the sheet row: a line being added has no row until the
-   * write comes back, and that is precisely the line a retry has to recognise —
-   * otherwise a second attempt appends a second copy of it. Survives the row
+   * Deliberately NOT the rule id: a line being added has no id until the write
+   * comes back, and that is precisely the line a retry has to recognise —
+   * otherwise a second attempt appends a second copy of it. Survives the id
    * being adopted after a successful add, and keeps the React key honest when a
    * line in the middle is dropped.
    */
   key: string;
-  /** The sheet row this came from, or undefined for one being added. */
-  row?: number;
   driver: string;
   start: string;
   end: string;
-  /** Source sheet row whose per-row formulas/format should be copied on append. */
-  copyFromRow?: number;
   /**
    * The destination NAME this line answers for; "" is every destination.
    *
-   * Set when the line is created and never edited here. A line being ADDED
-   * carries it into the sheet; a line that already has a row cannot change it,
-   * because the only write that touches an existing row is `completeConfigRow`
-   * and it deliberately names no destination column. So this is what the rule
-   * IS, not a field being offered — but it has to be on the line, because the
-   * clash check cannot be right without it.
+   * Set when the line is created and not offered as a field here — this is what
+   * the rule IS — but it has to be on the line, because the clash check cannot be
+   * right without it.
    */
   dropoff: string;
 }
@@ -75,7 +69,7 @@ export const newLineKey = () => `new:${++newLineSeq}`;
 export const asLine = (r: BranchRule): Line => ({
   alt_drop_off_id:r.alt_drop_off_id,
   rule_id:r.rule_id,revision:r.revision,assignment_mode:r.assignment_mode,
-  key: `row:${r.row}`, row: r.row, driver: r.driver, start: r.start, end: r.end,
+  key: `rule:${r.rule_id}`, driver: r.driver, start: r.start, end: r.end,
   dropoff: r.dropoff ?? "",
 });
 
@@ -106,9 +100,9 @@ export const asLine = (r: BranchRule): Line => ({
 export const sameScope = (a: Line, b: Line) =>
   a.dropoff.trim().toLowerCase() === b.dropoff.trim().toLowerCase();
 
-/** What a line would write, including a requested copy of the source row's
- * smart_driver_id cell. Visible fields can match while that cell differs. */
-export const sig = (l: Line) => [l.driver, l.start, l.end, l.dropoff, l.copyFromRow ?? "",l.assignment_mode??"",l.alt_drop_off_id??""].join("\u0000");
+/** What a line would write, including a requested copy of the source rule's
+ * notification settings. Visible fields can match while those differ. */
+export const sig = (l: Line) => [l.driver, l.start, l.end, l.dropoff, l.copyFromRuleId ?? "",l.assignment_mode??"",l.alt_drop_off_id??""].join("\u0000");
 
 /**
  * The branch's day AS THIS DESTINATION SEES IT.
@@ -176,7 +170,8 @@ export const fromMin = (m: number) => {
 
 /** One rule whose boundary could be moved, and the window it would end up with. */
 export interface Stretch {
-  row: number;
+  rule_id: number;
+  revision: number;
   driver: string;
   edge: "start" | "end";
   /** The time to write into that edge. */
@@ -221,7 +216,7 @@ function coveredMinutes(lines: readonly Line[]): boolean[] {
  *     editor, which shows the whole day at once.
  */
 export function shrinkOptions(
-  sides: readonly [{ row: number; driver: string; window: string }, { row: number; driver: string; window: string }],
+  sides: readonly [OverlapRule, OverlapRule],
   rules: BranchRule[],
 ): Stretch[] {
   const [first, second] = sides;
@@ -239,22 +234,22 @@ export function shrinkOptions(
   const before = coveredMinutes(all);
   const out: Stretch[] = [];
 
-  const consider = (side: { row: number; driver: string }, edge: "start" | "end", value: string) => {
-    const own = fw && side.row === first.row ? fw : sw;
+  const consider = (side: OverlapRule, edge: "start" | "end", value: string) => {
+    const own = fw && side.rule_id === first.rule_id ? fw : sw;
     const next: Line = {
-      key: `row:${side.row}`, row: side.row, driver: side.driver,
+      key: `rule:${side.rule_id}`, rule_id: side.rule_id, revision: side.revision, driver: side.driver,
       start: edge === "start" ? value : own[0],
       end: edge === "end" ? value : own[1],
       /** A boundary move keeps the rule's own destination scope. */
-      dropoff: all.find((l) => l.row === side.row)?.dropoff ?? "",
+      dropoff: all.find((l) => l.rule_id === side.rule_id)?.dropoff ?? "",
     };
     if (next.start === next.end) return;                  // on duty for no minute
-    const rest = all.filter((l) => l.row !== side.row);
+    const rest = all.filter((l) => l.rule_id !== side.rule_id);
     const after = [...rest, next];
     if (findClash(after)) return;                         // still competing with someone
     const cover = coveredMinutes(after);
     for (let m = 0; m < 1440; m++) if (before[m] && !cover[m]) return;  // opened a hole
-    out.push({ row: side.row, driver: side.driver, edge, value, window: `${next.start}–${next.end}` });
+    out.push({ rule_id: side.rule_id, revision: side.revision, driver: side.driver, edge, value, window: `${next.start}–${next.end}` });
   };
 
   // The earlier rule hands over where the later one begins…
@@ -265,16 +260,19 @@ export function shrinkOptions(
 }
 
 /** Stable identity for one overlapping pair, so the dashboard can remember that
- *  it was dealt with. Built from the branch and the two ROWS rather than the
+ *  it was dealt with. Built from the branch and the two RULE IDS rather than the
  *  drivers or the window: fixing it changes the window and may change who is on
  *  which side, and a key that moved would make the row reappear as new. */
-export function overlapKey(o: { customer_id: string; rules?: readonly [{ row: number }, { row: number }] }): string {
-  const rows = o.rules ? [o.rules[0].row, o.rules[1].row].sort((a, b) => a - b).join("-") : "?";
-  return `${o.customer_id}|${rows}`;
+export function overlapKey(o: { customer_id: string; rules?: readonly [{ rule_id: number }, { rule_id: number }] }): string {
+  const ids = o.rules ? [o.rules[0].rule_id, o.rules[1].rule_id].sort((a, b) => a - b).join("-") : "?";
+  return `${o.customer_id}|${ids}`;
 }
 
+/** One side of an overlapping pair, as the dashboard holds it. */
+export interface OverlapRule { rule_id: number; revision: number; driver: string; window: string }
+
 /**
- * The stretch that would stop being covered if one row were removed, or null.
+ * The stretch that would stop being covered if one rule were removed, or null.
  *
  * The delete button needed this and did not have it, which made the two sides of
  * an overlap look interchangeable when they are not. Live pair, 2026-09-03: one
@@ -290,11 +288,11 @@ export function overlapKey(o: { customer_id: string; rules?: readonly [{ row: nu
  * Reported in the sheet's own half-open terms — the label is the window a rule
  * would need in order to cover it again.
  */
-export function coverageLostWithout(rules: BranchRule[], row: number): string | null {
+export function coverageLostWithout(rules: BranchRule[], ruleId: number): string | null {
   const all = rules.map(asLine);
-  if (!all.some((l) => l.row === row)) return null;
+  if (!all.some((l) => l.rule_id === ruleId)) return null;
   const before = coveredMinutes(all);
-  const after = coveredMinutes(all.filter((l) => l.row !== row));
+  const after = coveredMinutes(all.filter((l) => l.rule_id !== ruleId));
   const lost: number[] = [];
   for (let m = 0; m < 1440; m++) if (before[m] && !after[m]) lost.push(m);
   if (lost.length === 0) return null;
@@ -317,7 +315,7 @@ export function availableTime(lines: readonly Line[], index: number, edge: "star
   return false;
 }
 
-/** A rule as the copy picker hands it over: what to write, with no row yet. */
+/** A rule as the copy picker hands it over: what to write, not yet saved here. */
 export interface CopiedLine {
   sourceRuleId?: number;
   assignment_mode?: "fixed" | "smart";
@@ -325,13 +323,11 @@ export interface CopiedLine {
   driver: string;
   start: string;
   end: string;
-  /** Source sheet row used to restore per-row formulas and formatting. */
-  sourceRow?: number;
 }
 
 /**
- * Replace the editor's current shifts with the copied pattern. Reuse sheet rows
- * first so saving updates them in place; surplus sheet rows must be deleted.
+ * Replace the editor's current shifts with the copied pattern. Reuse saved rules
+ * first so saving updates them in place; surplus saved rules must be deleted.
  * Every copied shift takes the destination of the branch being edited.
  */
 export function applyCopiedLines(
@@ -339,12 +335,9 @@ export function applyCopiedLines(
   copied: readonly CopiedLine[],
   dropoff: string,
 ): { lines: Line[]; touched: string[]; removed: Line[] } {
-  // Row 2 holds array formulas and cannot be deleted, so always reuse it.
-  const sheetRows = lines.filter((l) => l.row)
-    .sort((a, b) => Number(b.row === 2) - Number(a.row === 2));
   const reusable = [
-    ...sheetRows,
-    ...lines.filter((l) => !l.row && (l.driver.trim() || l.start.trim() || l.end.trim())),
+    ...lines.filter((l) => l.rule_id),
+    ...lines.filter((l) => !l.rule_id && (l.driver.trim() || l.start.trim() || l.end.trim())),
   ];
   const touched: string[] = [];
   const out = copied.map((c, i) => {
@@ -352,16 +345,15 @@ export function applyCopiedLines(
     if (!current) {
       const key = newLineKey();
       touched.push(key);
-      return { key, driver: c.driver, start: c.start, end: c.end, dropoff, alt_drop_off_id: c.alt_drop_off_id ?? "", copyFromRow: c.sourceRow,
+      return { key, driver: c.driver, start: c.start, end: c.end, dropoff, alt_drop_off_id: c.alt_drop_off_id ?? "",
         ...(c.sourceRuleId ? {copyFromRuleId:c.sourceRuleId,assignment_mode:c.assignment_mode} : {}) };
     }
     const next = {
       ...current, driver: c.driver, start: c.start, end: c.end, dropoff, alt_drop_off_id: c.alt_drop_off_id ?? "",
-      copyFromRow: c.sourceRow === current.row ? undefined : c.sourceRow,
       ...(c.sourceRuleId ? {copyFromRuleId:c.sourceRuleId,assignment_mode:c.assignment_mode} : {}),
     };
     if (sig(current) !== sig(next)) touched.push(current.key);
     return next;
   });
-  return { lines: out, touched, removed: reusable.slice(copied.length).filter((l) => l.row) };
+  return { lines: out, touched, removed: reusable.slice(copied.length).filter((l) => l.rule_id) };
 }

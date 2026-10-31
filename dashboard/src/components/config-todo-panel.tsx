@@ -142,21 +142,20 @@ function OverlapRow({
    *  this list — just turned one redundant row into two adjacent ones covering
    *  the same stretch. The row that should not exist is what actually wants
    *  removing. */
-  async function clearRow(row: number) {
+  async function clearRow(ruleId: number) {
     setErr(null);
-    setBusy(`clear${row}`);
+    setBusy(`clear${ruleId}`);
     try {
-      const rule = rules.find((r) => r.row === row);
+      const rule = rules.find((r) => r.rule_id === ruleId);
       if (!rule) { onSaved(); return; }
       const res = await fetch("/api/config/delete-row", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ row, pickup_name: o.pickup_name, expected_row: { rule_id: rule.rule_id, revision: rule.revision, driver: rule.driver, start: rule.start, end: rule.end, dropoff: rule.dropoff } }),
+        body: JSON.stringify({ pickup_name: o.pickup_name, expected_row: { rule_id: rule.rule_id, revision: rule.revision, driver: rule.driver, start: rule.start, end: rule.end, dropoff: rule.dropoff ?? "" } }),
       });
       const j = await res.json().catch(() => ({}));
-      if (j.code === "CONFIG_ROW_CHANGED") { toast.warning(j.error); onSaved(); return; }
       if (!res.ok || !j.ok) throw new Error(j.error || `Lỗi ${res.status}`);
-      toast.success(`Đã xoá dòng #${j.row ?? row} — ${o.pickup_name}`);
+      toast.success(`Đã xoá ca ${rule.start}–${rule.end} — ${o.pickup_name}`);
       onSaved(key);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -218,21 +217,21 @@ function OverlapRow({
             // same information into the answer: press the green one. The other
             // still states its consequence, quietly, because choosing it is
             // sometimes right.
-            const lost = coverageLostWithout(rules, r.row);
+            const lost = coverageLostWithout(rules, r.rule_id);
             return (
-            <span key={r.row} className="inline-flex items-center gap-1">
-              {armed === r.row ? (
+            <span key={r.rule_id} className="inline-flex items-center gap-1">
+              {armed === r.rule_id ? (
                 <>
                   <span className="text-[11px] font-semibold text-red-700">
-                    Xoá dòng #{r.row}?{lost && ` Sẽ hở ${lost}.`}
+                    Xoá ca {r.window}?{lost && ` Sẽ hở ${lost}.`}
                   </span>
                   <Button
                     size="sm"
                     className="h-6 px-2 text-[11px] bg-red-600 hover:bg-red-700"
                     disabled={busy !== null}
-                    onClick={() => clearRow(r.row)}
+                    onClick={() => clearRow(r.rule_id)}
                   >
-                    {busy === `clear${r.row}` ? "Đang xoá…" : "Xoá"}
+                    {busy === `clear${r.rule_id}` ? "Đang xoá…" : "Xoá"}
                   </Button>
                   <Button
                     size="sm" variant="outline"
@@ -252,9 +251,9 @@ function OverlapRow({
                       : "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
                   }`}
                   disabled={busy !== null || armed !== null}
-                  onClick={() => setArmed(r.row)}
+                  onClick={() => setArmed(r.rule_id)}
                   title={
-                    `Xoá hẳn dòng #${r.row} (${displayDriverCell(r.driver)} ${r.window})` +
+                    `Xoá hẳn ca ${displayDriverCell(r.driver)} ${r.window}` +
                     (lost ? ` — sau đó ${lost} sẽ không còn ai trực` : " — không mất giờ trực nào")
                   }
                 >
@@ -460,7 +459,7 @@ function CopyFromBranch({
   useEffect(() => { setActive(0); }, [q]);
 
   const take = (b: CopySource) => {
-    onCopy(b.rules.map((r) => ({ driver: r.driver, start: r.start, end: r.end, alt_drop_off_id:r.alt_drop_off_id ?? "", sourceRow: r.row, sourceRuleId:r.rule_id, assignment_mode:r.assignment_mode })));
+    onCopy(b.rules.map((r) => ({ driver: r.driver, start: r.start, end: r.end, alt_drop_off_id:r.alt_drop_off_id ?? "", sourceRuleId:r.rule_id, assignment_mode:r.assignment_mode })));
     setQ("");
     onClose();
   };
@@ -591,7 +590,7 @@ function CopyFromBranch({
                   </span>
                   <span className="mt-0.5 block space-y-0.5">
                     {b.rules.map((r) => (
-                        <span key={r.row} className="block text-[11px] text-slate-700">
+                        <span key={r.rule_id} className="block text-[11px] text-slate-700">
                           <span className="tabular-nums">
                             {r.start && r.end ? `${r.start}–${r.end}` : "cả ngày"}
                           </span>
@@ -642,8 +641,8 @@ export function BranchEditor({
   pickupId?: string;
   dropoffName: string;
   rules: BranchRule[];
-  /** Driverless rows for this pending config. They exist in the sheet but are
-   *  not among the usable rules. */
+  /** Driverless rules for this pending config. They are saved but not among the
+   *  usable rules. */
   extraLines?: Omit<Line, "key">[];
   drivers: ConfigDriver[];
   locations?: {id:string;name:string}[];
@@ -673,8 +672,8 @@ export function BranchEditor({
    * write them straight back.
    */
   const [initial] = useState<Line[]>(() =>
-    [...rules.map(asLine), ...extraLines.map((line) => ({ ...line, key: `row:${line.row}` }))]
-      .sort((x, y) => (toMin(x.start) - toMin(y.start)) || x.row! - y.row!)
+    [...rules.map(asLine), ...extraLines.map((line) => ({ ...line, key: `rule:${line.rule_id}` }))]
+      .sort((x, y) => (toMin(x.start) - toMin(y.start)) || (x.rule_id ?? 0) - (y.rule_id ?? 0))
   );
   const [lines, setLines] = useState<Line[]>(initial);
   const hasAlternatives = !!locations && lines.some(l => l.assignment_mode);
@@ -686,7 +685,8 @@ export function BranchEditor({
     {value:"",label:"Không thay thế điểm giao"},
     ...(locations ?? []).map(c => ({value:c.id,label:c.name})),
   ], [locations, bulkSchedules]);
-  const snapshot = (line: Line): ConfigRowSnapshot => ({ rule_id:line.rule_id, revision:line.revision, driver: line.driver, start: line.start, end: line.end, dropoff: line.dropoff });
+  // Only ever taken of a SAVED line, which always carries its id and revision.
+  const snapshot = (line: Line): ConfigRowSnapshot => ({ rule_id:line.rule_id!, revision:line.revision!, driver: line.driver, start: line.start, end: line.end, dropoff: line.dropoff });
   const expectedRows = useRef(new Map(initial.map((line) => [line.key, snapshot(line)])));
   const [pendingDeletes, setPendingDeletes] = useState<Line[]>([]);
   const [saveUncertain, setSaveUncertain] = useState(false);
@@ -704,7 +704,7 @@ export function BranchEditor({
    * the sheet — and because onDone never ran, the props they came from have not
    * refreshed, so against the baseline alone they still read as changed. Pressing
    * Lưu again then wrote them a second time: a harmless overwrite for a line that
-   * has a row, but for a line still being ADDED it appended a duplicate rule, and
+   * is saved, but for a line still being ADDED it appended a duplicate rule, and
    * two rules alive at the same minute is exactly the clash findClash exists to
    * prevent — now sitting in the sheet, where this editor can no longer see it.
    */
@@ -735,7 +735,7 @@ export function BranchEditor({
     setLines((ls) => [...ls, { key: newLineKey(), assignment_mode: bulkSchedules || rules.some(r=>r.assignment_mode) ? "fixed" : undefined, driver: "", start: "", end: "", dropoff: dropoffName }]);
   const dropLine = (key: string) => {
     const line = lines.find((l) => l.key === key);
-    if (line?.row) setPendingDeletes((prev) => [...prev, line]);
+    if (line?.rule_id) setPendingDeletes((prev) => [...prev, line]);
     setLines((ls) => ls.filter((l) => l.key !== key));
   };
 
@@ -759,15 +759,14 @@ export function BranchEditor({
 
     // Resolve every driver first, so nothing is written if one name is wrong.
     const resolved: Line[] = [];
-    for (const l of lines) {
+    for (const [i, l] of lines.entries()) {
       const r = resolveDriverCell(l.driver, drivers);
       if ("error" in r) {
         // Which line, not just what is wrong with it. A branch being set up can
-        // hold several, and the one still empty is usually a sheet row the
-        // editor was opened from rather than anything on screen the supervisor
-        // put there — so "Chưa chọn tài xế" on its own sent them looking at the
-        // wrong row.
-        const at = l.row ? `Dòng #${l.row}` : "Dòng mới";
+        // hold several, and the one still empty is usually the rule the editor
+        // was opened from rather than anything the supervisor put there — so
+        // "Chưa chọn tài xế" on its own sent them looking at the wrong line.
+        const at = `Ca ${i + 1}`;
         const when = l.start && l.end ? ` (${l.start}–${l.end})` : "";
         setErr(lines.length > 1 ? `${at}${when}: ${r.error}` : r.error);
         return;
@@ -799,7 +798,6 @@ export function BranchEditor({
 
     setBusy(true);
     let written = 0;
-    let relocated = 0;
     try {
       const post = async (url: string, body: object) => {
         const res = await fetch(url, {
@@ -811,13 +809,13 @@ export function BranchEditor({
       };
       if (bulkSchedules || initial.some(l=>l.assignment_mode) || resolved.some(l=>l.assignment_mode)) {
         const rows = resolved.filter(changed);
-        const wire = (l:Line,old?:Line) => ({row:old?.row ?? l.row,driver:l.driver,start:l.start,end:l.end,dropoff:l.dropoff,
+        const wire = (l:Line,old?:Line) => ({driver:l.driver,start:l.start,end:l.end,dropoff:l.dropoff,
           assignment_mode:l.assignment_mode,alt_drop_off_id:l.alt_drop_off_id,copy_from_rule_id:old ? undefined : l.copyFromRuleId,
-          expected_row:old ? snapshot(old) : l.row ? expectedRows.current.get(l.key) : undefined});
+          expected_row:old ? snapshot(old) : l.rule_id ? expectedRows.current.get(l.key) : undefined});
         const branches = bulkSchedules ? bulkSchedules.map(s=>({pickup_name:s.pickup,pickup_customer_id:s.customer_id,
-          rows:resolved.map((l,i)=>wire({...l,row:undefined,dropoff:s.dropoff,copyFromRuleId:s.rules[0]?.rule_id},s.rules[i] ? asLine(s.rules[i]) : undefined)),
-          removed:s.rules.slice(resolved.length).map(r=>({row:r.row,expected_row:snapshot(asLine(r))})),
-        })) : [{pickup_name:pickupName,pickup_customer_id:pickupId,rows:rows.map(l=>wire(l)),removed:pendingDeletes.map(l=>({row:l.row,expected_row:expectedRows.current.get(l.key)}))}];
+          rows:resolved.map((l,i)=>wire({...l,rule_id:undefined,revision:undefined,dropoff:s.dropoff,copyFromRuleId:s.rules[0]?.rule_id},s.rules[i] ? asLine(s.rules[i]) : undefined)),
+          removed:s.rules.slice(resolved.length).map(r=>({expected_row:snapshot(asLine(r))})),
+        })) : [{pickup_name:pickupName,pickup_customer_id:pickupId,rows:rows.map(l=>wire(l)),removed:pendingDeletes.map(l=>({expected_row:expectedRows.current.get(l.key)}))}];
         if (branches.some(b=>b.rows.length || b.removed.length)) {
           const started = performance.now();
           const result = await post("/api/config/save-batch",{branches});
@@ -831,28 +829,24 @@ export function BranchEditor({
       // BEFORE the next is attempted, so that picture survives the throw.
       for (const l of resolved) {
         if (!changed(l)) continue;
-        if (l.row) {
+        if (l.rule_id) {
           const res = await post("/api/config/complete-row", {
-            row: l.row, pickup_name: pickupName, driver_name: l.driver,
+            pickup_name: pickupName, driver_name: l.driver,
             shift_start: l.start, shift_end: l.end, dropoff_name: l.dropoff,
-            copy_from_row: l.copyFromRow, copy_from_rule_id:l.copyFromRuleId, assignment_mode:l.assignment_mode,
+            assignment_mode:l.assignment_mode,
             alt_drop_off_id:l.assignment_mode ? l.alt_drop_off_id : undefined,
             expected_row: expectedRows.current.get(l.key),
           });
-          if (typeof res.row === "number") l.row = res.row;
           if (typeof res.rule_id === "number") { l.rule_id=res.rule_id; l.revision=res.revision; }
-          if (res.moved) relocated++;
         } else {
           const res = await post("/api/config/add-rule", {
             pickup_name: pickupName, dropoff_name: l.dropoff,
             driver_name: l.driver, shift_start: l.start, shift_end: l.end,
-            copy_from_row: l.copyFromRow, copy_from_rule_id:l.copyFromRuleId, assignment_mode:l.assignment_mode,
+            copy_from_rule_id:l.copyFromRuleId, assignment_mode:l.assignment_mode,
             alt_drop_off_id:l.assignment_mode ? l.alt_drop_off_id : undefined,
           });
-          // Adopt the row the sheet just gave it. This line is an existing row
-          // from here on, so a retry updates it in place instead of adding a
-          // second one beside it.
-          if (typeof res.row === "number") l.row = res.row;
+          // Adopt the id it was just given. This line is a saved rule from here
+          // on, so a retry updates it in place instead of adding a second one.
           if (typeof res.rule_id === "number") { l.rule_id=res.rule_id; l.revision=res.revision; }
         }
         // Record the RESOLVED driver name, and normalise the field to it, so the
@@ -860,22 +854,19 @@ export function BranchEditor({
         // "nam" and saved as "D001 - Nguyễn Văn Nam" reads as changed again.
         const done = { ...l };
         expectedRows.current.set(done.key, snapshot(done));
-        setLines((ls) => ls.map((x) => (x.key === done.key ? { ...x, row: done.row, driver: done.driver, rule_id:done.rule_id,revision:done.revision } : x)));
+        setLines((ls) => ls.map((x) => (x.key === done.key ? { ...x, driver: done.driver, rule_id:done.rule_id,revision:done.revision } : x)));
         setCommitted((c) => ({ ...c, [done.key]: sig(done) }));
         written++;
       }
-      // Finish updates first; descending deletes preserve pending row addresses.
-      const removed = [...pendingDeletes].sort((a, b) => b.row! - a.row!);
+      // Updates first, then deletes.
+      const removed = [...pendingDeletes];
       for (const l of removed) {
-        const res = await post("/api/config/delete-row", { row: l.row, pickup_name: pickupName, expected_row: expectedRows.current.get(l.key) });
-        const removedRow = typeof res.row === "number" ? res.row : l.row!;
-        if (res.moved) relocated++;
+        await post("/api/config/delete-row", { pickup_name: pickupName, expected_row: expectedRows.current.get(l.key) });
         expectedRows.current.delete(l.key);
-        setPendingDeletes((prev) => prev.filter((x) => x.key !== l.key).map((x) => !l.rule_id && x.row! > removedRow ? { ...x, row: x.row! - 1 } : x));
-        setLines((prev) => prev.map((x) => !l.rule_id && x.row && x.row > removedRow ? { ...x, row: x.row - 1 } : x));
+        setPendingDeletes((prev) => prev.filter((x) => x.key !== l.key));
         written++;
       }
-      toast.success(written ? `Đã lưu ${written} dòng — ${pickupName}${relocated ? ` (đã tìm lại ${relocated} dòng bị dời)` : ""}` : "Không có thay đổi nào");
+      toast.success(written ? `Đã lưu ${written} dòng — ${pickupName}` : "Không có thay đổi nào");
       if (removed.length) (onRemoved ?? onDone)();
       else onDone();
     } catch (e) {
@@ -972,9 +963,9 @@ export function BranchEditor({
             </>}
           </div>}
           <div className="flex min-h-8 items-center justify-end gap-1">
-            <span className="whitespace-nowrap text-[10px] text-slate-600">{l.row && !l.rule_id ? `#${l.row}` : `Ca ${i + 1}`}</span>
-            <button type="button" onClick={() => dropLine(l.key)} disabled={busy || (l.row === 2 && !l.rule_id)}
-              aria-label={`Bỏ ca ${i + 1}`} title={l.row === 2 && !l.rule_id ? "Dòng 2 giữ công thức của bảng" : "Bỏ dòng này — bấm Lưu để xác nhận"}
+            <span className="whitespace-nowrap text-[10px] text-slate-600">{`Ca ${i + 1}`}</span>
+            <button type="button" onClick={() => dropLine(l.key)} disabled={busy}
+              aria-label={`Bỏ ca ${i + 1}`} title="Bỏ dòng này — bấm Lưu để xác nhận"
               className="rounded p-1 text-slate-600 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40"><X className="size-3.5" aria-hidden="true" /></button>
           </div>
         </div>
@@ -1019,9 +1010,11 @@ function UnfinishedRow({
   return (
     <div className="px-2 py-1.5 hover:bg-slate-50">
       <div className="flex flex-wrap items-center gap-2 min-w-0">
-        <span className="shrink-0 font-mono text-[11px] text-slate-500" title="Số dòng">
-          #{u.row}{rows.length > 1 ? ` +${rows.length - 1}` : ""}
-        </span>
+        {rows.length > 1 && (
+          <span className="shrink-0 font-mono text-[11px] text-slate-500" title="Số quy tắc chưa có tài xế">
+            {rows.length} dòng
+          </span>
+        )}
         <span
           className="order-first min-w-0 basis-full break-words text-sm font-medium text-slate-800 md:order-none md:basis-auto md:flex-1 md:truncate"
           title={`${u.pickup_name}${u.dropoff_name ? ` → ${u.dropoff_name}` : ""}`}
@@ -1050,7 +1043,7 @@ function UnfinishedRow({
           rules={servesDropoff(rules, u.dropoff_name)}
           extraLines={rows.map((row) => {
             const [start, end] = (row.window ?? "–").split("–");
-            return { row: row.row, rule_id:row.rule_id, revision:row.revision, assignment_mode:row.assignment_mode, driver: "", start: start ?? "", end: end ?? "", dropoff: row.dropoff_name };
+            return { rule_id:row.rule_id, revision:row.revision, assignment_mode:row.assignment_mode, driver: "", start: start ?? "", end: end ?? "", dropoff: row.dropoff_name };
           })}
           drivers={drivers}
           onCancel={() => setOpen(false)}

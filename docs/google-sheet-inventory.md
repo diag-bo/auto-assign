@@ -38,6 +38,8 @@ the Thay ca row sync → `lib/thay-ca-reconcile.ts`. `loadConfigFromSheets` /
 - [ ] Turn off the Apps Script triggers in the `cartrack_combined` project (Driver tab fetcher, MISA web app). Deleting the files here does not stop them.
 - [ ] Remove `GOOGLE_SERVICE_ACCOUNT_KEY`, `MASTER_CLIENT_INFO_SOURCE` and `LEAVE_NAME_RECOVERY` from both Vercel projects once this is deployed. Harmless if left; nothing reads them.
 
-## Not done
+## Row numbers (2026-10-31, follow-up)
 
-- The config screens still use a row number as their handle for a rule. Nothing writes by it (every save is matched by rule id + revision); switching the screens to the rule id is a separate change.
+The config screens and routes no longer carry a row number at all. Rules, to-dos,
+gaps and overlaps are identified by `rule_id` + `revision`; every route takes an
+`expected_row` snapshot with both and refuses one without.

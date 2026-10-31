@@ -21,20 +21,19 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object") return bad("Body không hợp lệ");
     const configDay = resolveConfigDay(body.config_day);
-    const { row, pickup_name, edge, value, expected_row } = body as {
-      row?: number; pickup_name?: string; edge?: string; value?: string; expected_row?: unknown;
+    const { pickup_name, edge, value, expected_row } = body as {
+      pickup_name?: string; edge?: string; value?: string; expected_row?: unknown;
     };
 
-    if (!Number.isInteger(row) || (row as number) < 2) return bad("Thiếu số dòng hợp lệ");
     if (!pickup_name?.trim()) return bad("Thiếu tên điểm lấy mẫu");
-    const expected = expected_row === undefined ? undefined : parseConfigRowSnapshot(expected_row);
-    if (expected_row !== undefined && !expected) return bad("Thông tin dòng cũ không hợp lệ");
+    const expected = parseConfigRowSnapshot(expected_row);
+    if (!expected) return bad("Thiếu mã quy tắc — tải lại");
     if (edge !== "start" && edge !== "end") return bad("Chỉ sửa được giờ bắt đầu hoặc giờ kết thúc");
     const v = (value ?? "").trim();
     if (timeToMins(v) < 0) return bad(`Giờ không hợp lệ: ${v || "(trống)"}`);
 
     weekdayOnly(configDay);
-    const result = await editMasterConfig({ row: row as number, expectPickup: pickup_name, expected: expected ?? undefined }, { [edge]: v });
+    const result = await editMasterConfig({ expectPickup: pickup_name, expected }, { [edge]: v });
     await invalidateConfigCache();
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

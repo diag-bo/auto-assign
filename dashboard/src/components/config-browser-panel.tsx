@@ -122,8 +122,7 @@ export function searchConfigRows(rows: readonly ConfigRowView[], query: string):
  * was rules for places that no longer send work.
  *
  * Vietnamese collation, so accented names land where a Vietnamese reader looks
- * for them rather than after Z. The sheet row stays on every line, so the order
- * shown here never costs anyone the ability to find the row itself.
+ * for them rather than after Z.
  */
 export function sortConfigRows(rows: readonly ConfigRowView[]): ConfigRowView[] {
   const vi = new Intl.Collator("vi", { sensitivity: "base", numeric: true });
@@ -135,25 +134,18 @@ export function sortConfigRows(rows: readonly ConfigRowView[]): ConfigRowView[] 
     vi.compare(a.dropoff, b.dropoff) ||
     startMin(a) - startMin(b) ||
     vi.compare(a.driver, b.driver) ||
-    a.row - b.row                                        // never an arbitrary tie
+    a.rule_id - b.rule_id                                // never an arbitrary tie
   );
 }
 
-/** One branch's rows, in the shape the editor takes. Only rows that carry a
- *  sheet row can be edited — every writer addresses them by number. */
+/** One branch's rules, in the shape the editor takes. An unmapped client has no
+ *  rule to edit. */
 function rulesOf(rows: readonly ConfigRowView[]): BranchRule[] {
-  return rows.filter((r) => !r.unmapped).map((r) => ({ row: r.row, rule_id:r.rule_id, revision:r.revision, assignment_mode:r.assignment_mode, driver: r.driver, start: r.start, end: r.end, dropoff: r.dropoff, alt_drop_off_id:r.alt_drop_off_id }));
+  return rows.filter((r) => !r.unmapped).map((r) => ({ rule_id:r.rule_id, revision:r.revision, assignment_mode:r.assignment_mode, driver: r.driver, start: r.start, end: r.end, dropoff: r.dropoff, alt_drop_off_id:r.alt_drop_off_id }));
 }
 
-/**
- * Whether a row can be addressed by a write at all.
- *
- * Every config writer re-reads the row's pickup cell and refuses if it is not
- * the branch it was told to expect. A row with a BLANK pickup passes that
- * check against any other blank cell, so the one guard standing between a
- * bulk write and the wrong line does nothing for it — those rows stay
- * single-edit only, where a human is looking at the one row they mean.
- */
+/** Whether a row can be ticked for a bulk write: a real rule for a named,
+ *  active branch. */
 const isWritable = (r: ConfigRowView) => !r.unmapped && !isInactive(r.pickup) && r.pickup.trim().length > 0;
 
 async function postJson(url: string, body: unknown) {
@@ -168,26 +160,21 @@ async function postJson(url: string, body: unknown) {
 }
 
 /**
- * One bulk write, as ONE request.
- *
- * This used to loop the per-row routes, which spend two or three Sheets reads a
- * row: past ~25 rows (~15 for a delete) Google's 60-reads-a-minute quota
- * answered 429 and every remaining row failed, leaving a partial write. The bulk
- * routes read once, check every row against that read, and write once — see
- * bulkUpdateConfigRows. Rows whose branch moved are skipped and listed rather
- * than written.
+ * One bulk write, as ONE request. Each rule is re-checked by id + revision; a
+ * rule that changed since it was loaded is skipped and listed rather than
+ * written (bulkMasterConfig).
  */
-type BulkResult = { done: { row: number }[]; skipped: { row: number; pickup: string; reason: string }[] };
+type BulkResult = { done: { rule_id: number }[]; skipped: { rule_id: number; pickup: string; reason: string }[] };
 
 function reportBulk(label: string, res: BulkResult) {
   const first = res.skipped[0];
-  const why = first ? `Dòng ${first.row} (${first.pickup}): ${first.reason}` : "";
+  const why = first ? `${first.pickup}: ${first.reason}` : "";
   if (res.skipped.length === 0) toast.success(`${label}: ${res.done.length} dòng`);
   else if (res.done.length > 0) toast.warning(`${label}: ${res.done.length} dòng — bỏ qua ${res.skipped.length}. ${why}`);
   else toast.error(`Không ghi được dòng nào. ${why}`);
 }
 
-const targetBody = (rows: readonly ConfigRowView[]) => rows.map((r) => ({ row: r.row, pickup_name: r.pickup, expected_row: { rule_id:r.rule_id, revision:r.revision, driver: r.driver, start: r.start, end: r.end, dropoff: r.dropoff } }));
+const targetBody = (rows: readonly ConfigRowView[]) => rows.map((r) => ({ pickup_name: r.pickup, expected_row: { rule_id:r.rule_id, revision:r.revision, driver: r.driver, start: r.start, end: r.end, dropoff: r.dropoff } }));
 
 type BulkMode = "driver" | "hours" | "both" | "schedule" | "delete";
 
@@ -256,8 +243,7 @@ function BulkBar({
     return run("Đã đổi ca", "/api/config/bulk-update", { shift_start: start, shift_end: end });
   };
 
-  // The server deletes highest row first in one atomic batch, so the order
-  // the rows are ticked in does not matter.
+  // One atomic batch, so the order the rows are ticked in does not matter.
   const applyDelete = () => run("Đã xoá", "/api/config/bulk-delete", {});
   const applyBoth = () => {
     const cell = splitDriverNames(driverCell).join(DRIVER_SEP);
@@ -457,17 +443,17 @@ function ReplaceDriverPanel({
   const writable = affected.filter(r => !r.unmapped && r.pickup.trim().length > 0);
   const inactiveCount = writable.filter(r => isInactive(r.pickup)).length;
   const unwritable = affected.length - writable.length;
-  const picked = writable.filter((r) => !excluded.has(r.row));
+  const picked = writable.filter((r) => !excluded.has(r.rule_id));
 
   const pickFrom = (names: string[], selected?: ConfigDriver) => {
     setFrom(names[0] ?? "");
     setFromId(selected && rows.some(r => r.driver_ids?.includes(selected.driver_id)) ? selected.driver_id : "");
     setExcluded(new Set());
   };
-  const toggle = (row: number) =>
+  const toggle = (ruleId: number) =>
     setExcluded((s) => {
       const next = new Set(s);
-      if (!next.delete(row)) next.add(row);
+      if (!next.delete(ruleId)) next.add(ruleId);
       return next;
     });
 
@@ -482,13 +468,13 @@ function ReplaceDriverPanel({
         ...(configDay === "weekday" ? {from_driver_id:fromId,to_driver_id:toId} : {}),
       });
       const done = (j.replaced ?? []).length as number;
-      const skipped = (j.skipped ?? []) as { row: number; pickup: string; reason: string }[];
+      const skipped = (j.skipped ?? []) as { rule_id: number; pickup: string; reason: string }[];
       const scheduled=Number(j.scheduled_replaced??0);
       if (skipped.length === 0) toast.success(`Đã thay tài xế trên ${done} dòng config và ${scheduled} lịch cố định`);
       else if (done > 0) {
-        toast.warning(`Đã thay ${done} dòng config và ${scheduled} lịch cố định — bỏ qua ${skipped.length}. Dòng ${skipped[0].row} (${skipped[0].pickup}): ${skipped[0].reason}`);
+        toast.warning(`Đã thay ${done} dòng config và ${scheduled} lịch cố định — bỏ qua ${skipped.length}. ${skipped[0].pickup}: ${skipped[0].reason}`);
       } else {
-        toast.error(`Không thay được dòng nào. Dòng ${skipped[0]?.row} (${skipped[0]?.pickup}): ${skipped[0]?.reason}`);
+        toast.error(`Không thay được dòng nào. ${skipped[0]?.pickup}: ${skipped[0]?.reason}`);
       }
       onDone();
     } catch (e) {
@@ -554,12 +540,12 @@ function ReplaceDriverPanel({
               {writable.map((r) => {
                 const after = to ? replaceDriverInCell(r.driver, from, to) : null;
                 return (
-                  <li key={r.row} className="flex items-start gap-2 border-b border-slate-100 px-2 py-1 last:border-b-0">
+                  <li key={r.rule_id} className="flex items-start gap-2 border-b border-slate-100 px-2 py-1 last:border-b-0">
                     <input
                       type="checkbox"
-                      checked={!excluded.has(r.row)}
-                      onChange={() => toggle(r.row)}
-                      aria-label={`Đổi dòng ${r.row} — ${r.pickup}`}
+                      checked={!excluded.has(r.rule_id)}
+                      onChange={() => toggle(r.rule_id)}
+                      aria-label={`Đổi dòng ${r.pickup} ${r.start}–${r.end}`}
                       className="mt-0.5 size-3.5 accent-indigo-600"
                     />
                     <div className="min-w-0 flex-1">
@@ -580,7 +566,6 @@ function ReplaceDriverPanel({
                         </div>
                       )}
                     </div>
-                    {!r.rule_id && <span className="font-mono text-[10px] text-slate-500">{r.row}</span>}
                   </li>
                 );
               })}
@@ -786,7 +771,6 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
   const hoverClient = profileHover?.kind === "client" ? clientMetaById.get(profileHover.id) : null;
   const hoverDriver = profileHover?.kind === "driver" ? driverMetaById.get(profileHover.id) : null;
   const hoverName = hoverClient ? clientName(hoverClient) : hoverDriver ? displayDriverCell(`${hoverDriver.cartrack.first_name ?? ""} ${hoverDriver.cartrack.last_name ?? ""}`.trim()) : "";
-  const showSheetRow = sheetRows.length > 0 && !sheetRows.some(r => r.rule_id);
   const clientMetaByName = useMemo(() => {
     const byName = new Map<string, ClientMeta | null>();
     for (const client of clientMetadata ?? []) {
@@ -825,7 +809,8 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
         const name = clientName(client).trim();
         const folded = name.toLocaleLowerCase("vi");
         if (mappedIds.has(client.customer_id) || (nameCounts.get(folded) === 1 && mappedNames.has(folded))) return [];
-        return [{ row: -index - 1, customer_id: client.customer_id, pickup: name,
+        // A negative placeholder id: unmapped clients have no rule, and are never writable.
+        return [{ rule_id: -index - 1, revision: 0, customer_id: client.customer_id, pickup: name,
           driver: "", start: "", end: "", dropoff: "", smart: false, unmapped: true }];
       }),
     ].map((row) => {
@@ -885,8 +870,8 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
   /** One route at a time: the editor writes, and two open on the same route
    *  would each hold a baseline taken before the other's writes landed.
    *
-   *  Keep the initiating row so its pencil reflects the open route editor. */
-  const [editing, setEditing] = useState<{ branch: string; pickup: string; dropoff: string; row: number } | null>(null);
+   *  Keep the initiating rule so its pencil reflects the open route editor. */
+  const [editing, setEditing] = useState<{ branch: string; pickup: string; dropoff: string; rule_id: number } | null>(null);
   const [editingBusy, setEditingBusy] = useState(false);
   const editorRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -926,14 +911,14 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
     return starts;
   }, [shown]);
   const selectedRows = useMemo(
-    () => rows.filter((r) => selected.has(r.row) && isWritable(r)),
+    () => rows.filter((r) => selected.has(r.rule_id) && isWritable(r)),
     [rows, selected],
   );
-  const allShownPicked = selectable.length > 0 && selectable.every((r) => selected.has(r.row));
-  const toggleRow = (row: number) =>
+  const allShownPicked = selectable.length > 0 && selectable.every((r) => selected.has(r.rule_id));
+  const toggleRow = (ruleId: number) =>
     setSelected((s) => {
       const next = new Set(s);
-      if (!next.delete(row)) next.add(row);
+      if (!next.delete(ruleId)) next.add(ruleId);
       return next;
     });
   // Everything currently DRAWN, which is the search's results up to the render
@@ -942,8 +927,8 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
   const toggleAllShown = () =>
     setSelected((s) => {
       const next = new Set(s);
-      if (allShownPicked) for (const r of selectable) next.delete(r.row);
-      else for (const r of selectable) next.add(r.row);
+      if (allShownPicked) for (const r of selectable) next.delete(r.rule_id);
+      else for (const r of selectable) next.add(r.rule_id);
       return next;
     });
   const clearSelection = useCallback(() => setSelected(new Set()), []);
@@ -1230,8 +1215,7 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
             extraLines={editingRows[0].unmapped ? [{
               driver: "", start: "", end: "", dropoff: "",
               assignment_mode: rows.some(row => row.assignment_mode) ? "fixed" : undefined,
-              copyFromRuleId: (rows.find(row => !row.unmapped && row.smart && row.row > 2) ?? rows.find(row => !row.unmapped && row.row > 2))?.rule_id,
-              copyFromRow: rows.find(row => !row.unmapped && row.smart && row.row > 2)?.row ?? rows.find(row => !row.unmapped && row.row > 2)?.row,
+              copyFromRuleId: (rows.find(row => !row.unmapped && row.smart) ?? rows.find(row => !row.unmapped))?.rule_id,
             }] : []}
             drivers={rosterDrivers} locations={(clientMetadata ?? []).filter(c=>!isInactive(clientName(c))).map(c => ({id:c.customer_id,name:clientName(c)}))}
             onBusyChange={setEditingBusy}
@@ -1254,8 +1238,7 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
                 <col className="w-[35%]" />
                 <col className="w-[14%]" />
                 <col className="w-[25%]" />
-                <col className={showSheetRow ? "w-[15%]" : "w-[19%]"} />
-                {showSheetRow && <col className="w-[4%]" />}
+                <col className="w-[19%]" />
               </colgroup>
               <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] text-slate-600">
                 <tr>
@@ -1267,7 +1250,7 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
                       // "off": the box is about the rows on screen, and a
                       // hand-picked few of them is neither.
                       ref={(el) => {
-                        if (el) el.indeterminate = !allShownPicked && selectable.some((r) => selected.has(r.row));
+                        if (el) el.indeterminate = !allShownPicked && selectable.some((r) => selected.has(r.rule_id));
                       }}
                       onChange={toggleAllShown}
                       disabled={selectable.length === 0}
@@ -1281,7 +1264,6 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
                   <th className="px-2 py-1 text-left font-medium">Thời gian</th>
                   <th className="px-2 py-1 text-left font-medium">{readOnly ? "Khu vực · tài xế" : "Tài xế"}</th>
                   <th className="px-2 py-1 text-left font-medium whitespace-nowrap">Điểm giao thay thế</th>
-                  {showSheetRow && <th className="px-2 py-1 text-right font-medium" title="Số dòng">Dòng</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1304,21 +1286,21 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
                   // things it is about to rewrite.
                   const inBranch = !!editing && editing.branch === branch && editing.pickup === r.pickup && editing.dropoff === r.dropoff;
                   // Keyed to the run's first row, which carries the one button.
-                  const runOpen = !!editing && editing.row === first.row;
+                  const runOpen = !!editing && editing.rule_id === first.rule_id;
                   return [(
                   <tr
-                    key={r.unmapped ? r.customer_id : r.row}
+                    key={r.unmapped ? r.customer_id : r.rule_id}
                     className={`align-top ${firstOfBranch ? "border-t border-slate-200" : ""} ${
-                      r.unmapped ? "bg-amber-50/70 hover:bg-amber-100/70" : selected.has(r.row) ? "bg-indigo-50" : inBranch ? "bg-indigo-50/60" : "hover:bg-slate-50"
+                      r.unmapped ? "bg-amber-50/70 hover:bg-amber-100/70" : selected.has(r.rule_id) ? "bg-indigo-50" : inBranch ? "bg-indigo-50/60" : "hover:bg-slate-50"
                     }`}
                   >
                     <td className="px-1 py-1">
                       <input
                         type="checkbox"
-                        checked={selected.has(r.row)}
-                        onChange={() => toggleRow(r.row)}
+                        checked={selected.has(r.rule_id)}
+                        onChange={() => toggleRow(r.rule_id)}
                         disabled={readOnly || loading || !!err || !isWritable(r)}
-                        aria-label={`Chọn dòng ${r.row}${r.pickup ? ` — ${r.pickup}` : ""}`}
+                        aria-label={`Chọn dòng ${r.pickup || "không tên"} ${r.start}–${r.end}`}
                         title={isWritable(r) ? undefined : "Dòng không có điểm lấy — sửa từng dòng bằng nút Sửa"}
                         className="size-4 accent-indigo-600"
                       />
@@ -1336,7 +1318,7 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
                           className="-my-1.5 size-8 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
                           aria-expanded={runOpen}
                           aria-label={runOpen ? "Đóng" : r.unmapped ? `Thiết lập config cho ${r.pickup}` : `Sửa lịch ${r.pickup || branch} → ${r.dropoff || "mọi điểm"}`}
-                          onClick={() => { closeProfile(); setEditing(runOpen ? null : { branch, pickup: r.pickup, dropoff: r.dropoff, row: r.row }); }}
+                          onClick={() => { closeProfile(); setEditing(runOpen ? null : { branch, pickup: r.pickup, dropoff: r.dropoff, rule_id: r.rule_id }); }}
                           disabled={(readOnly && !sundayEditable) || loading || !!err || editingBusy || inactive || (readOnly ? !r.customer_id : !r.customer_id && !r.pickup)}
                         >
                           {runOpen ? <X className="size-4" aria-hidden="true" /> : <Pencil className="size-4" aria-hidden="true" />}
@@ -1401,7 +1383,6 @@ export function ConfigBrowserPanel({ drivers, refreshKey = 0, beforeTable }: {
                         className="text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">{clientName(alternativeInfo)}</button>
                         : r.alt_drop_off_id || null}
                     </td>
-                    {showSheetRow && <td className="px-2 py-1 text-right font-mono text-[10px] text-slate-500">{r.unmapped ? "—" : r.row}</td>}
                   </tr>
                   ),
                   ];
