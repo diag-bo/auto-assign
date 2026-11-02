@@ -14,7 +14,11 @@ import { pushRunLog } from "@/lib/smart-log-kv";
 import { check3plHandoff, complete3plHandoff } from "@/lib/three-pl-handoff";
 
 export const runtime = "nodejs";
-export const preferredRegion = "sin1";
+// No preferredRegion, on purpose: with the same settings as /api/assign/cron
+// (maxDuration 60, no region) Vercel bundles both into one function, and the cron's
+// 3-minute pings keep it warm — bookings arrive minutes apart and were paying a
+// ~360 ms cold start each time. The "sin1" hint changed nothing: on Hobby the project
+// runs in one region (bookings logged hkg1 with it set).
 // Creating a trip with its driver is two Cartrack calls in the worst case (a refusal,
 // then a driverless retry), so give it room rather than have one cut off mid-write.
 export const maxDuration = 60;
