@@ -20,9 +20,11 @@ export async function GET(req: NextRequest) {
   const stage = q.get("stage") === "draft" ? "draft" : "final";
   // A link the bot sent carries the picture drawn just before sending: answer
   // with it at once, sized, so Zalo's fetch does not wait on a 6–8 s render.
-  const png = (await preparedImage(date, kind, q.get("v"))) ?? (await drawImage(date, kind, stage, await loadSundayLines(date)));
+  const prepared = await preparedImage(date, kind, q.get("v"));
+  const png = prepared ?? (await drawImage(date, kind, stage, await loadSundayLines(date)));
   if (!png) return NextResponse.json({ error: "Không còn ca trống" }, { status: 404 });
+  // Only a prepared picture is fixed for its link; one drawn now is today's roster.
   return new Response(new Uint8Array(png), {
-    headers: { "Content-Type": "image/png", "Content-Length": String(png.length), "Cache-Control": "public, max-age=86400" },
+    headers: { "Content-Type": "image/png", "Content-Length": String(png.length), "Cache-Control": prepared ? "public, max-age=86400" : "no-store" },
   });
 }

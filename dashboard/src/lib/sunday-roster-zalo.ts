@@ -119,13 +119,15 @@ export async function preparedImageUrls(
   return urls;
 }
 
-/** Links that draw on request — the admin preview, which nobody times out. */
+/** Links that draw on request — the admin preview, which nobody times out.
+ *  A fresh `v` per page: one fixed link was cached a day, so a roster edited
+ *  after the first look still previewed the old picture. */
 export const previewImageUrls = (date: string, lines: SundayLine[], stage: Stage): string[] =>
-  (openLines(lines).length ? (["roster", "open"] as const) : (["roster"] as const)).map((k) => imageUrl(date, k, stage, "0"));
+  (openLines(lines).length ? (["roster", "open"] as const) : (["roster"] as const)).map((k) => imageUrl(date, k, stage, `p${Date.now()}`));
 
 /** The picture prepared for this link, or null (expired, or never stored). */
 export async function preparedImage(date: string, kind: ImageKind, v: string | null): Promise<Buffer | null> {
-  if (!v || !/^\d+$/.test(v) || v === "0") return null;
+  if (!v || !/^\d+$/.test(v)) return null;
   const b64 = await getRedis()?.get<string>(imageKey(date, kind, v)).catch(() => null);
   return typeof b64 === "string" && b64 ? Buffer.from(b64, "base64") : null;
 }
