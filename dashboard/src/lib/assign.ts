@@ -1718,9 +1718,6 @@ export function isRollable(j: Job): boolean {
   // a day the schedule does not cover. (Job 34447974: Saturday's 10:30 Bình Lợi
   // Trung pickup rolled onto Sunday 13/09 and was bounced between drivers.)
   if ((j.labels ?? []).includes(SCHEDULE_JOB_LABEL)) return false;
-  // A KQ/VT collect job keeps its date and its driver: rolling would strip the driver
-  // the hand-over is tied to. Left waiting, it surfaces in Cần xử lý after 24h.
-  if ((j.labels ?? []).includes(PSC_DELIVERY_LABEL)) return false;
   const stops = j.stops ?? [];
   // Skip if the pickup sample is already collected. Re-assignment resets a
   // stop's activity, so rolling a job whose pickup is Hoàn thành (status 4)

@@ -24,7 +24,7 @@
  */
 import { isRollable } from "../src/lib/assign";
 import { PSC_RETURN_LABEL, PSC_OUTBOUND_LABEL } from "../src/lib/return-trips";
-import { PSC_VIA_LABEL } from "../src/lib/job-filters";
+import { PSC_DELIVERY_LABEL, PSC_VIA_LABEL } from "../src/lib/job-filters";
 import { SCHEDULE_JOB_LABEL } from "../src/lib/schedule-job";
 import type { Job } from "../src/lib/types";
 
@@ -126,6 +126,8 @@ ok(
     }),
   ),
 );
+ok("an unassigned KQ/VT job rolls", isRollable(job({ labels: [PSC_DELIVERY_LABEL] })));
+ok("an assigned KQ/VT job rolls too (and is unassigned)", isRollable(job({ labels: [PSC_DELIVERY_LABEL], delivery_driver_id: "d1" })));
 
 console.log(failures === 0 ? "\nAll passed\n" : `\n${failures} FAILED\n`);
 process.exit(failures === 0 ? 0 : 1);
