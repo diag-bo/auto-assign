@@ -54,7 +54,7 @@ const HONG_NEGATIVE_PATTERN = new RegExp(`^(/?(?:da )?(?:(?:${[...TODAY_WORDS, .
 export function classifyPickupReply(text: string): "cancel" | "review" | "ignore" {
   const plain = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
     .toLowerCase().replace(/\s+/g, " ").trim()
-    .replace(/@bot (?:giao nhan mau|dieu phoi x)\b/g, "").trim()
+    .replace(/@bot (?:giao nhan mau|dieu phoi x|tro ly diag)\b/g, "").trim()
     .replace(HONG_NEGATIVE_PATTERN, "$1khong");
   const core = CORE_PATTERN.test(plain) || NO_PICKUP_REGEX.some(pattern => pattern.test(plain)) || SHORT_NEGATIVE_PATTERN.test(plain);
   if (!core) return "ignore";
