@@ -5,6 +5,7 @@ import { vnDate } from "./time";
 import { invalidateConfigCache, invalidateDriversCache, loadConfig } from "./config";
 import { invalidateLeaveCache } from "./leave-config";
 import { invalidateShiftCache } from "./shift-window";
+import { lockOpenGeofences } from "./geofence-bypass";
 import { syncCartrackProfiles, syncLabcenterMetadata } from "./master-sync";
 import { sbDelete, sbInsert } from "./supabase-rest";
 import { MAX_SELF_CALLS, MORNING_RUN_KEY, MORNING_RUN_LOCK, postContinuation } from "./morning-sync-trigger";
@@ -88,6 +89,10 @@ export async function runMisaSyncStep(id:number,hop=MAX_SELF_CALLS) {
     run.status="in_progress";run.updated_at=new Date().toISOString();await db.set(KEY,run,{ex:TTL});
     if(run.phase==="profiles") {
       await syncCartrackProfiles();invalidateDriversCache();await invalidateConfigCache();run.phase="misa";
+      // Once a morning: re-lock any driver whose stop-arrival check was switched off in
+      // Cartrack. Its own try/catch — a failed sweep must never hold up MISA's leave.
+      if(run.daily)await lockOpenGeofences().then(r=>console.log(`[morning-sync] geofence: ${r.locked.length} locked, ${r.failed.length} failed`))
+        .catch(e=>console.error("[morning-sync] geofence sweep:",e instanceof Error?e.message:e));
     }else if(run.phase==="metadata") {
       // Every client code each morning (~1,600, ~0.35 s each), 10 at a time with a 0.3 s
       // pause between groups: ~2 min, one step. It was a seventh a day,
