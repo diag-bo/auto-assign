@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Banknote, Bot, CalendarClock, CalendarDays, ChevronDown, ClipboardList, Clock3, Gauge, MapPin, NotebookText, RefreshCw, Search, Settings2, Truck, UserPlus } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, Contact, CalendarClock, CalendarDays, ChevronDown, ClipboardList, Clock3, Gauge, MapPin, NotebookText, RefreshCw, Search, Settings2, Truck, UserPlus } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { RemovedCartrackClients } from "./removed-cartrack-clients";
 import { DataSourceIcon } from "./data-source-icon";
@@ -22,6 +22,7 @@ import { TatTeamPanel } from "./tat-team-panel";
 import { ShiftGrid } from "./shift-grid";
 import { SundayRosterPanel } from "./sunday-roster-panel";
 import { SalesTool } from "./sales-tool";
+import { DriverListPanel } from "./driver-list-panel";
 import { PayTeamPanel } from "./pay-team-panel";
 import { LocationsPanel, TplMappingsPanel } from "./locations-panel";
 import { ClientBotsPanel } from "./client-bots-panel";
@@ -37,7 +38,7 @@ import type { LeaveSuppression } from "@/lib/leave-suppression";
 import type { LabcenterMetadataReport } from "@/lib/master-sync";
 
 type Env = "prod" | "uat";
-type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "pay" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
+type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "pay" | "drivers" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
 
 export function Dashboard() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -648,7 +649,7 @@ export function Dashboard() {
     // honoured, so it is a tidy-up, not something to handle today.
     leave.invalid.filter((r) => !r.recovered).length;
 
-  const setupActive = ["config", "schedule", "shifts", "sunday", "locations", "tpl", "bots", "newcustomer"].includes(rightTab);
+  const setupActive = ["config", "schedule", "shifts", "drivers", "sunday", "locations", "tpl", "bots", "newcustomer"].includes(rightTab);
   const operationsActive = rightTab === "distance" || rightTab === "tat";
 
   const tabBtn = (active: boolean) =>
@@ -781,7 +782,7 @@ export function Dashboard() {
           {setupActive && <nav aria-label="Master Setup" className="flex flex-wrap items-center gap-1 shrink-0 border-b border-slate-200 pb-1.5">
             {([
               ["config", ClipboardList, "Config"], ["schedule", CalendarClock, "Lịch cố định"],
-              ["shifts", Clock3, "Bảng ca"], ["sunday", CalendarDays, "Lịch Chủ nhật"], ["locations", MapPin, "Địa điểm PSC"],
+              ["shifts", Clock3, "Bảng ca"], ["drivers", Contact, "Tài xế"], ["sunday", CalendarDays, "Lịch Chủ nhật"], ["locations", MapPin, "Địa điểm PSC"],
               ["tpl", Truck, "3PL Mapping"], ["bots", Bot, "Bot khách hàng"], ["newcustomer", UserPlus, "Tạo Mới KH"],
             ] as const).map(([tab, Icon, label]) => <button key={tab} aria-pressed={rightTab === tab} onClick={() => setRightTab(tab)} className={tabBtn(rightTab === tab)}>
               <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> {label}
@@ -911,6 +912,8 @@ export function Dashboard() {
               <div className="h-[72vh] lg:h-full">
                 <PayTeamPanel />
               </div>
+            ) : rightTab === "drivers" ? (
+              <div className="h-[72vh] lg:h-full"><DriverListPanel /></div>
             ) : rightTab === "newcustomer" ? (
               <div className="h-[72vh] lg:h-full overflow-y-auto"><SalesTool /></div>
             ) : rightTab === "tpl" ? (
