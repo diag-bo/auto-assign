@@ -1,6 +1,7 @@
 import { createJob } from "./cartrack";
 import { botContext, clientBotGroups, clientBots, clientBotToken, mentionOf, requestKeywords, type ClientBot, type ClientBotGroup } from "./client-bots";
 import { DROPOFF_PHOTO_TODO, LAB_CUSTOMER_ID, PICKUP_PHOTO_TODO } from "./job-filters";
+import { defaultDropoff, pscName } from "./kqvt";
 import { classifyPickupReply, getPickupReply, plainText, STAFF_CHECK, stripMentions } from "./scheduled-pickup-cancel";
 import { acquireCreateLock, releaseCreateLock } from "./smart-log-kv";
 import { getRedis } from "./tat-archive";
@@ -108,13 +109,15 @@ export async function requestTrip(group: ClientBotGroup, note: string): Promise<
   const { hours, minutes } = vnHoursMinutes();
   const hhmm = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
   try {
+    // The client's default drop-off from the master list; none means D001, as KQ/VT.
+    const dropoff = await defaultDropoff(group.customer_id) ?? LAB_CUSTOMER_ID;
     const res = await createJob({
       job_type_id: 1,
       schedule_type_id: 1,
-      reference_number: `Zalo ${(group.label || "KH").slice(0, 30)}→D001_${hhmm}`,
+      reference_number: `Zalo ${(group.label || "KH").slice(0, 30)}→${pscName(dropoff)}_${hhmm}`,
       stops: [
         { stop_type_id: 1, customer_id: group.customer_id, duration: 5, ...(note ? { note } : {}), todos: [PICKUP_PHOTO_TODO, { todo_type_id: 5, description: "Ghi chú" }] },
-        { stop_type_id: 2, customer_id: LAB_CUSTOMER_ID, duration: 5, todos: [DROPOFF_PHOTO_TODO] },
+        { stop_type_id: 2, customer_id: dropoff, duration: 5, todos: [DROPOFF_PHOTO_TODO] },
       ],
     }, "prod");
     if (!res.ok) {

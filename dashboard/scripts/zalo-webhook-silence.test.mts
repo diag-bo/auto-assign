@@ -37,6 +37,7 @@ const creates: string[] = [];
 const { POST } = await import("../src/app/api/zalo/webhook/route");
 const originalFetch = globalThis.fetch;
 const sent: string[] = [];
+let dropRows: { default_dropoff_id: string | null }[] = [];
 let jobReads = 0;
 let lookupJobs: Job[] = [];
 globalThis.fetch = async (input, init) => {
@@ -45,6 +46,7 @@ globalThis.fetch = async (input, init) => {
   }
   if (String(input).startsWith("https://sb.test/rest/v1/client_bots?")) return Response.json(botRows);
   if (String(input).startsWith("https://sb.test/rest/v1/client_bot_settings")) return Response.json([{ request_keywords: ["qua lấy mẫu", "đặt chuyến"] }]);
+  if (String(input).startsWith("https://sb.test/rest/v1/master_clients_read")) return Response.json(dropRows);
   if (String(input).includes("cartrack.com") && init?.method === "POST") {
     creates.push(String(init?.body));
     return Response.json({ data: { job_id: 9001 } });
@@ -158,7 +160,7 @@ try {
   assert.equal(sent.length, quietSent, "cancel off / unreadable list must stay silent");
   await POST(webhookRequest("ko có", { chat: { id: "zgr-sample-only", chat_type: "GROUP" } }));
   assert.equal(jobReads, quietReads, "another bot's group is not this bot's client group");
-  // Trip request: a keyword books client → D001; negated replies and request-off groups never do.
+  // Trip request: a keyword books client → its default drop-off (D001 if none); negated replies and request-off groups never do.
   const lastReply = () => JSON.parse(sent.at(-1)!).text as string;
   await POST(webhookRequest("@Bot Điều Phối X Dạ qua lấy mẫu giúp em", { chat: { id: "zgr-request", chat_type: "GROUP" } }));
   assert.equal(creates.length, 1, "keyword in a request group creates one trip");
@@ -172,6 +174,12 @@ try {
   await POST(webhookRequest("qua lấy mẫu", { chat: { id: "zgr-quiet", chat_type: "GROUP" } }));
   await POST(webhookRequest("hello qua lấy mẫuxyz", { chat: { id: "zgr-request", chat_type: "GROUP" } }));
   assert.equal(creates.length, 1, "negated, request-off and partial-word messages never create a trip");
+  // A default drop-off on the master client list replaces D001 (here D010).
+  dropRows = [{ default_dropoff_id: "9a15e7a4-3d83-11ed-be4e-506b8dbc8dfb" }];
+  await POST(webhookRequest("qua lấy mẫu", { chat: { id: "zgr-request", chat_type: "GROUP" } }));
+  assert.ok(creates[1]?.includes("9a15e7a4-3d83-11ed-be4e-506b8dbc8dfb") && !creates[1].includes("3927b076") && creates[1].includes("→D010_"), creates[1]);
+  dropRows = [];
+  creates.length = 1;
   await POST(webhookRequest("@Bot Điều Phối X hướng dẫn", { chat: { id: "zgr-request", chat_type: "GROUP" } }));
   assert.equal(lastReply(), "💡 Gợi ý 💡 khách hàng có thể tag **@Bot Điều Phối X** và nhắn “qua lấy mẫu” hoặc “đặt chuyến” để có thể được hỗ trợ lấy mẫu nhanh nhất.");
   const beforeNoGuide = sent.length;
