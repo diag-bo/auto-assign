@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendZaloMessage } from "@/lib/zalo";
-import { getPickupReply } from "@/lib/scheduled-pickup-cancel";
-import { CHAT_BY_CUSTOMER_ID } from "@/lib/scheduled-pickup-reminder";
+import { botContext } from "@/lib/client-bots";
+import { replyToGroup } from "@/lib/client-bot-actions";
 import {
   HELP,
   parseCommand,
@@ -137,12 +137,20 @@ export async function POST(req: NextRequest) {
   const text = typeof update.message?.text === "string" ? update.message.text : "";
   const chatId = update.message?.chat?.id != null ? String(update.message.chat.id) : "";
   if (!chatId) return NextResponse.json({ ok: true });
-  // Only configured pickup groups can cancel their own customer's current trip.
-  const pickupCustomerId = Object.entries(CHAT_BY_CUSTOMER_ID).find(([, group]) => group === chatId)?.[0];
-  if (pickupCustomerId) {
-    if (update.message?.chat?.chat_type === "GROUP") {
-      const reply = await getPickupReply(pickupCustomerId, text, chatId);
-      if (reply) await sendZaloMessage(token, chatId, reply);
+  // Only client groups set up in "Bot khách hàng" can cancel their own customer's
+  // current trip. An unreadable list stays silent: the chat may be a client group,
+  // which must never get the revenue gate's reply.
+  let client: Awaited<ReturnType<typeof botContext>>;
+  try {
+    client = await botContext("dieu_phoi", chatId);
+  } catch (e) {
+    console.error("[zalo-webhook] client bot groups unreadable", e);
+    return NextResponse.json({ ok: true });
+  }
+  if (client.group) {
+    if (client.bot && update.message?.chat?.chat_type === "GROUP") {
+      const reply = await replyToGroup(client.bot, client.group, text, chatId);
+      if (reply) await sendZaloMessage(token, chatId, reply, "markdown");
     }
     return NextResponse.json({ ok: true });
   }

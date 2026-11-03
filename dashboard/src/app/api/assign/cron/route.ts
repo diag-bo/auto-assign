@@ -16,6 +16,7 @@ import { createMorningReads } from "@/lib/morning-reads";
 import { recoverMorning } from "@/lib/morning-recovery";
 import { maybeAutoUpdatePickupEtas } from "@/lib/pickup-setup-auto";
 import { maybeSundayRosterPost } from "@/lib/sunday-roster-zalo";
+import { maybeClientBotGuides } from "@/lib/client-bot-actions";
 
 // The cycle (Cartrack + Goong calls) can take a while; give it headroom.
 export const maxDuration = 60;
@@ -67,6 +68,8 @@ export async function GET(req: NextRequest) {
   after(() => maybeAutoUpdatePickupEtas().catch(e => console.error("[cron] pickup ETA update:", e)));
   // Sunday roster, all 13:00: Mon auto-save, Tue admin open-slots alert, Wed draft to drivers, Thu admin alert, Fri final.
   after(() => maybeSundayRosterPost().catch(e => console.error("[cron] sunday roster post:", e)));
+  // Client bots' daily "how to use" message, Mon–Sat at each group's own time.
+  after(() => maybeClientBotGuides().catch(e => console.error("[cron] client bot guide:", e)));
 
   // 1) Switch off? Inside 05:30–22:00 the engine should be running, so self-heal
   //    by auto-arming — unless someone turned it off by hand, which now holds

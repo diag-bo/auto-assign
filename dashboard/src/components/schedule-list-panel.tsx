@@ -103,7 +103,7 @@ const INPUT_CLS =
   "w-full border border-slate-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-slate-400";
 
 /** Search the sheet's locations and explicitly select the matching customer. */
-function LocationField({
+export function LocationField({
   label,
   id,
   name,

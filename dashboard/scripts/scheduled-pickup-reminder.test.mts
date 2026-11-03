@@ -10,6 +10,13 @@ process.env.KV_REST_API_URL = "https://redis.test";
 process.env.KV_REST_API_TOKEN = "mocked";
 process.env.ZALO_KIOT_BOT_TOKEN = "pharmacy-token";
 process.env.ZALO_ADMIN_BOT_TOKEN = "admin-token";
+process.env.SUPABASE_URL = "https://sb.test";
+process.env.SUPABASE_SERVICE_ROLE_KEY = "mocked";
+const groupRows = [
+  { bot: "dieu_phoi", chat_id: "zgr-1c7aa981bbcf52910bde", customer_id: "51bfb168-446f-11ed-888f-506b8dbc8dfb", label: "", remind: true, cancel: true },
+  { bot: "dieu_phoi", chat_id: "zgr-5f2b2b46331ada44830b", customer_id: "f88dfab6-b522-11ee-bb52-506b8d9879b5", label: "", remind: true, cancel: true },
+  { bot: "dieu_phoi", chat_id: "zgr-no-remind", customer_id: "no-remind-customer", label: "", remind: false, cancel: true },
+];
 
 const { PROXY_DRIVER_ID } = await import("../src/lib/cartrack");
 const { releaseDueProxyJobs, remindDueUnassignedScheduledPickups } = await import("../src/lib/assign");
@@ -17,7 +24,7 @@ const { getDueTomorrowJobs } = await import("../src/lib/scheduled-dispatch");
 const labels = ["📅 Lịch cố định"];
 const customer = "51bfb168-446f-11ed-888f-506b8dbc8dfb";
 const chat = "zgr-1c7aa981bbcf52910bde";
-const message = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi ạ. Bên mình hôm nay có mẫu không, cho Diag xin xác nhận với ạ?\n👉 Tag **@Bot Điều Phối X** để báo không có mẫu";
+const message = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi ạ. Bên mình hôm nay có mẫu không, cho Diag xin xác nhận với ạ?\n👉 Nếu hôm nay không có mẫu, tag **@Bot Điều Phối X** và nhắn \"không có mẫu\", \"chưa có mẫu\" hoặc tương tự!";
 const now = new Date("2026-09-29T23:35:00+07:00");
 
 function job(id: number, change: Partial<Job> = {}): Job {
@@ -51,17 +58,25 @@ const originalFetch = globalThis.fetch;
 
 globalThis.fetch = async (input, init) => {
   const url = String(input);
+  if (url.startsWith("https://sb.test/rest/v1/client_bot_groups")) return Response.json(groupRows);
+  if (url.startsWith("https://sb.test/rest/v1/client_bots?")) return Response.json([
+    { id: "dieu_phoi", name: "Bot Điều Phối X", token: null, webhook_secret: null },
+    { id: "giao_nhan_mau", name: "Bot Giao nhận mẫu", token: null, webhook_secret: null },
+  ]);
   if (url.startsWith("https://redis.test")) {
     if (failStorage) throw new Error("Redis unavailable");
-    const commands = JSON.parse(String(init?.body)) as (string | number)[][];
+    const parsed = JSON.parse(String(init?.body)) as (string | number)[] | (string | number)[][];
+    // Single commands go unwrapped; pipelines arrive as a list of commands.
+    const commands = (Array.isArray(parsed[0]) ? parsed : [parsed]) as (string | number)[][];
+    const single = !Array.isArray(parsed[0]);
     if (commands[0]?.[0] === "set") {
       const key = String(commands[0][1]);
       assert.match(key, /^assign:late_alert:prod:\d+:fixed-pickup-reminder$/);
       const result = claims.has(key) ? null : "OK";
       claims.add(key);
-      return Response.json([{ result }]);
+      return Response.json(single ? { result } : [{ result }]);
     }
-    if (commands[0]?.[0] === "mget") return Response.json([{ result: [null, null] }]);
+    if (commands[0]?.[0] === "mget") return Response.json(single ? { result: [null, null] } : [{ result: [null, null] }]);
     throw new Error(`Unexpected Redis command: ${commands[0]?.[0]}`);
   }
   if (url.includes("/drivers/") && url.includes("/jobs?")) return Response.json({ data: [] });
@@ -132,11 +147,6 @@ try {
   assert.ok(logs.some((line) => line.includes("Job 109 - Fixed-pickup Zalo reminder skipped: bot token missing")));
 
   process.env.ZALO_KIOT_BOT_TOKEN = "pharmacy-token";
-  const preassigned = await releaseDueProxyJobs("2026-09-29", "prod", log, [job(301, { reference_number: "scheduled-301_2026-09-29" })]);
-  assert.deepEqual(preassigned.releasedIds, [], "direct preassignment never enters the unassigned pool");
-  assert.ok(events.includes("preassign:301"));
-  assert.equal(sends.length, 8, "direct preassignment also sends one reminder");
-  assert.ok(events.indexOf("preassign:301") < events.lastIndexOf(`send:${chat}`));
 
   failSend = false;
   const secondCustomer = job(401, { stops: [{ ...job(401).stops[0], customer_id: "f88dfab6-b522-11ee-bb52-506b8d9879b5" }] });
@@ -175,6 +185,17 @@ try {
     body: { chat_id: "sample-group", text: message.replace("@Bot Điều Phối X", "@Bot Giao nhận mẫu"), parse_mode: "markdown" },
   });
 
+  const noRemind = job(701, { stops: [{ ...job(701).stops[0], customer_id: "no-remind-customer" }] });
+  const beforeNoRemind = sends.length;
+  await releaseDueProxyJobs("2026-09-29", "prod", log, [noRemind]);
+  assert.equal(sends.length, beforeNoRemind, "a group with the reminder switched off gets nothing");
+
+  // Stale: still fakes Lịch cố định as the retired Google Sheet, so it runs last.
+  const preassigned = await releaseDueProxyJobs("2026-09-29", "prod", log, [job(301, { reference_number: "scheduled-301_2026-09-29" })]);
+  assert.deepEqual(preassigned.releasedIds, [], "direct preassignment never enters the unassigned pool");
+  assert.ok(events.includes("preassign:301"));
+  assert.equal(sends.length, 8, "direct preassignment also sends one reminder");
+  assert.ok(events.indexOf("preassign:301") < events.lastIndexOf(`send:${chat}`));
   console.log("Scheduled pickup reminder checks passed.");
 } finally {
   globalThis.fetch = originalFetch;

@@ -51,11 +51,21 @@ const SHORT_NEGATIVE_PATTERN = new RegExp(`^/?(?:da )?(?:(?:${TODAY_WORDS.join("
 // ponytail: interpret hong at reply start; extend clause grammar only for observed replies.
 const HONG_NEGATIVE_PATTERN = new RegExp(`^(/?(?:da )?(?:(?:${[...TODAY_WORDS, ...FUTURE_DATE_WORDS].join("|")}) )?)hong(?= (?:co|con|mau|can|lay)\\b)`);
 
-export function classifyPickupReply(text: string): "cancel" | "review" | "ignore" {
-  const plain = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
-    .toLowerCase().replace(/\s+/g, " ").trim()
-    .replace(/@bot (?:giao nhan mau|dieu phoi x|tro ly diag)\b/g, "").trim()
-    .replace(HONG_NEGATIVE_PATTERN, "$1khong");
+/** Diacritics off, lowercase, single spaces — the form every phrase list here is in. */
+export function plainText(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
+    .toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** `mentions` = the tagged bot's "@Name", removed wherever it appears. */
+export function stripMentions(text: string, mentions: string[] = []): string {
+  let plain = plainText(text).replace(/@bot (?:giao nhan mau|dieu phoi x|tro ly diag)\b/g, "");
+  for (const m of mentions.map(plainText).filter(Boolean)) plain = plain.split(m).join(" ");
+  return plain.replace(/\s+/g, " ").trim();
+}
+
+export function classifyPickupReply(text: string, mentions: string[] = []): "cancel" | "review" | "ignore" {
+  const plain = stripMentions(text, mentions).replace(HONG_NEGATIVE_PATTERN, "$1khong");
   const core = CORE_PATTERN.test(plain) || NO_PICKUP_REGEX.some(pattern => pattern.test(plain)) || SHORT_NEGATIVE_PATTERN.test(plain);
   if (!core) return "ignore";
   const positive = [...plain.matchAll(POSITIVE_PATTERN)].some(match => {
@@ -68,13 +78,18 @@ export function classifyPickupReply(text: string): "cancel" | "review" | "ignore
   return "cancel";
 }
 
+/** Ends every client reply that leaves the request to a person. Clients never see
+ *  "Cartrack" or "điều phối" (supervisor, 2026-11-03); replyToGroup alerts the admin
+ *  group whenever a reply carries this, so the promised check actually happens. */
+export const STAFF_CHECK = "Vui lòng đợi nhân viên Diag kiểm tra thêm, xin cám ơn!";
+
 /** Review/positive/date-scoped replies never enter the Cartrack cancellation path. */
-export async function getPickupReply(customerId: string, text: string, chatId: string): Promise<string | null> {
-  const decision = classifyPickupReply(text);
+export async function getPickupReply(customerId: string, text: string, chatId: string, mentions: string[] = []): Promise<string | null> {
+  const decision = classifyPickupReply(text, mentions);
   if (decision === "ignore") return null;
   if (decision === "review") {
     console.warn("[zalo-pickup] needs review", { customerId, chatId, text });
-    return "Nội dung cần điều phối xác nhận thêm. Bot chưa huỷ chuyến lấy mẫu. Vui lòng liên hệ điều phối.";
+    return `Bot chưa huỷ chuyến lấy mẫu. ${STAFF_CHECK}`;
   }
   return cancelScheduledPickup(customerId);
 }
@@ -122,15 +137,15 @@ export async function cancelScheduledPickup(customerId: string): Promise<string>
     if (candidates.length !== 1) {
       return candidates.length === 0
         ? "Hiện không có chuyến lấy mẫu cố định nào đủ điều kiện huỷ."
-        : "Có nhiều chuyến đang chờ. Vui lòng liên hệ điều phối để xác nhận chuyến cần huỷ.";
+        : `Có nhiều chuyến đang chờ nên bot chưa huỷ. ${STAFF_CHECK}`;
     }
     // Recheck the pickup immediately before cancelling; the day list can lag.
     const current = await getJobDetails(candidates[0].job_id, "prod");
     if (cancelableScheduleJobs(current.data ? [current.data] : [], today, customerId).length !== 1) {
-      return "Chuyến đã thay đổi trạng thái, nên bot không huỷ. Vui lòng liên hệ điều phối.";
+      return `Chuyến đã thay đổi trạng thái nên bot chưa huỷ. ${STAFF_CHECK}`;
     }
     if (!(await cancelJobFromTimeline(candidates[0].job_id, today, "prod"))) {
-      return "Không huỷ được chuyến trên Cartrack. Vui lòng liên hệ điều phối.";
+      return `Bot chưa huỷ được chuyến. ${STAFF_CHECK}`;
     }
     // Consume the existing reminder claim so even a stale release list stays silent.
     await claimLateAlert(candidates[0].job_id, "prod", 86400, PICKUP_REMINDER_CLAIM)
@@ -138,6 +153,6 @@ export async function cancelScheduledPickup(customerId: string): Promise<string>
     return `Đã huỷ chuyến lấy mẫu cố định hôm nay (Job #${candidates[0].job_id}).`;
   } catch (error) {
     console.error("[zalo-pickup] cancellation failed", error);
-    return "Không kiểm tra được chuyến trên Cartrack. Vui lòng liên hệ điều phối.";
+    return `Bot chưa kiểm tra được chuyến. ${STAFF_CHECK}`;
   }
 }

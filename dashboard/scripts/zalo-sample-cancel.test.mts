@@ -70,7 +70,15 @@ try {
   delete process.env.ZALO_SAMPLE_CHAT_ID;
   let jobReads = 0;
   process.env.CARTRACK_AUTH = "test-auth";
+  process.env.SUPABASE_URL = "https://sb.test";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
+  let groupRows: object[] = [];
   globalThis.fetch = async (url, init) => {
+    if (String(url).startsWith("https://sb.test/rest/v1/client_bot_groups")) return Response.json(groupRows);
+    if (String(url).startsWith("https://sb.test/rest/v1/client_bots?")) return Response.json([
+      { id: "giao_nhan_mau", name: "Bot Giao nhận mẫu", token: null, webhook_secret: null },
+      { id: "an_sinh", name: "Bot Trợ Lý Diag", token: null, webhook_secret: null },
+    ]);
     if (String(url).startsWith("https://fleetapi-vn.cartrack.com/rest/delivery/jobs?")) {
       jobReads++;
       return Response.json({ data: [] });
@@ -116,6 +124,32 @@ try {
   for (const text of cases.review) await POST(request({ ok: true, result: message(text) }));
   assert.equal(jobReads, readsBeforeReview, "mixed and future-date replies must never read or cancel Cartrack jobs");
   assert.ok(sends.slice(4 + negatives.length).every(reply => reply.chat_id === "test-group" && reply.text.includes("Bot chưa huỷ")));
+  // A table row serves its own customer; cancel off keeps the group silent.
+  delete process.env.ZALO_SAMPLE_CHAT_ID;
+  groupRows = [{ bot: "giao_nhan_mau", chat_id: "test-group", customer_id: "other-customer", label: "", remind: true, cancel: false }];
+  const beforeOff = { reads: jobReads, sent: sends.length };
+  await POST(request(message("không có mẫu")));
+  await POST(request(message("/id")));
+  assert.deepEqual({ reads: jobReads, sent: sends.length }, beforeOff, "cancel off: no lookup, no reply, no /id once set up");
+  groupRows = [{ ...groupRows[0], cancel: true }];
+  await POST(request(message("không có mẫu")));
+  assert.equal(jobReads, beforeOff.reads + 1, "a group added in the table cancels for its own customer");
+
+  // An Sinh's route: secret = sha256(token) hex, first 32 — as registered with Zalo before the table.
+  const { POST: anSinh } = await import("../src/app/api/zalo/an-sinh/route");
+  const { createHash } = await import("node:crypto");
+  process.env.ZALO_ANSINH_BOT_TOKEN = "ansinh-token";
+  const anSinhSecret = createHash("sha256").update("ansinh-token").digest("hex").slice(0, 32);
+  const anSinhReq = (secret: string) => new NextRequest("https://example.test/api/zalo/an-sinh", {
+    method: "POST", headers: { "Content-Type": "application/json", "x-bot-api-secret-token": secret },
+    body: JSON.stringify({ ok: true, result: { ...message("@Bot Trợ Lý Diag không có mẫu"), message: { ...message("").message, text: "@Bot Trợ Lý Diag không có mẫu", chat: { id: "zgr-ansinh", chat_type: "GROUP" } } } }),
+  });
+  groupRows = [{ bot: "an_sinh", chat_id: "zgr-ansinh", customer_id: "f0773008-0f51-11ee-951b-506b8dbc8dfb", label: "An Sinh", remind: true, cancel: true }];
+  assert.equal((await anSinh(anSinhReq("wrong"))).status, 401);
+  const beforeAnSinh = { reads: jobReads, sent: sends.length };
+  assert.equal((await anSinh(anSinhReq(anSinhSecret))).status, 200);
+  assert.equal(jobReads, beforeAnSinh.reads + 1, "An Sinh's group cancels through its own route");
+  assert.equal(sends.at(-1)?.chat_id, "zgr-ansinh");
 } finally {
   globalThis.fetch = originalFetch;
   process.env = originalEnv;
