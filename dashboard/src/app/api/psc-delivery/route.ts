@@ -1,7 +1,8 @@
 /**
  * /qr "Giao Kết Quả / Vật Tư": a PSC sends results or supplies out to clients.
  *
- *   GET  ?q=…  search the Cartrack customer directory (accent-insensitive, 15 hits)
+ *   GET  ?q=…&psc=…  search that PSC's own clients (default drop-off = the PSC;
+ *              accent-insensitive, 15 hits)
  *   POST       { pickup, deliveries: [{ customer_id, kind, note, files }] }
  *              → 202 at once; then per client a ONE-STOP collect job at the PSC,
  *                given to the client's driver — or a photo to-do added to the open
@@ -16,7 +17,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { BASE_URL, getHeaders, getCustomerById } from "@/lib/cartrack";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
-import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, defaultDropoff, deliverTodo, isNear, loadBooked, loadPending, logBooking, pickCollector, planDelivery, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
+import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, defaultDropoff, deliverTodo, isNear, isSmartClient, loadBooked, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
 import { loadConfig } from "@/lib/config";
 import { loadLeaveEntries } from "@/lib/leave-config";
 import { shortCode } from "@/lib/psc-dup";
@@ -89,9 +90,12 @@ export async function GET(req: NextRequest) {
     }
   }
   const q = req.nextUrl.searchParams.get("q") ?? "";
+  const psc = req.nextUrl.searchParams.get("psc") ?? "";
+  if (!PSC_ROUTES.some((r) => r.pickup === psc)) return NextResponse.json({ error: "Chi nhánh không hợp lệ." }, { status: 400 });
   if (q.trim().length < 3) return NextResponse.json({ customers: [] });
   try {
-    return NextResponse.json({ customers: rankCustomers((await directory()).values(), q) });
+    const [rows, mine] = await Promise.all([directory(), pscClients(psc)]);
+    return NextResponse.json({ customers: rankCustomers([...rows.values()].filter((c) => mine.has(c.customer_id)), q) });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 502 });
   }
@@ -139,6 +143,12 @@ export async function POST(req: NextRequest) {
   if (typeof deliveries === "string") return NextResponse.json({ error: deliveries }, { status: 400 });
   if (deliveries.some((d) => !UUID.test(d.customer_id))) {
     return NextResponse.json({ error: "Khách hàng không hợp lệ." }, { status: 400 });
+  }
+  // Only the PSC's own clients (supervisor, 2026-11-03); the search shows no others.
+  const mine = await pscClients(route.pickup).catch(() => null);
+  if (!mine) return NextResponse.json({ error: "Không kiểm tra được khách hàng. Thử lại sau." }, { status: 502 });
+  if (deliveries.some((d) => !mine.has(d.customer_id))) {
+    return NextResponse.json({ error: "Chỉ đặt được cho khách hàng có điểm giao mặc định là chi nhánh này." }, { status: 400 });
   }
   const allFiles = deliveries.flatMap((d) => d.files);
   if (allFiles.length && !proofUploadConfigured()) {
@@ -239,7 +249,7 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        const who = plan.autoAssign && config && leave ? await pickCollector(config, leave, d.customer_id, route, "prod").catch(() => null) : null;
+        const who = plan.autoAssign && config && leave ? await pickCollector(config, leave, d.customer_id, route, "prod", near).catch(() => null) : null;
         const res = await createCollectJob(base, "", who, "prod", near);
         if (!res.jobId) {
           console.error("[psc-delivery] create failed:", res.status, JSON.stringify(res.body).slice(0, 300));
@@ -249,6 +259,9 @@ export async function POST(req: NextRequest) {
         const entry: KqvtEntry = {
           ...base, job_id: res.jobId, collector: res.driverId ?? undefined, collector_name: res.driverId ? who?.name ?? undefined : undefined,
           ...(near ? { direct: true } : {}),
+          // Smart client, nobody given: the cycle hands it to the driver of the client's
+          // pickup once they are at the PSC (lib/kqvt.ts smartCollector).
+          ...(!near && !res.driverId && plan.autoAssign && config && isSmartClient(config, d.customer_id) ? { smart: true } : {}),
         };
         await savePending(entry);
         pending.push(entry);

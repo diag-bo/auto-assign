@@ -160,7 +160,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
     const ac = new AbortController();
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/psc-delivery?q=${encodeURIComponent(key)}`, { signal: ac.signal });
+        const r = await fetch(`/api/psc-delivery?q=${encodeURIComponent(key)}&psc=${encodeURIComponent(pickup)}`, { signal: ac.signal });
         const j = await r.json();
         if (r.ok) seen.current.set(key, j.customers ?? []);
         setHits(j.customers ?? []);
@@ -168,7 +168,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
       finally { if (!ac.signal.aborted) setSearching(false); }
     }, 600);
     return () => { clearTimeout(t); ac.abort(); };
-  }, [q]);
+  }, [q, pickup]);
 
   const set = (i: number, patch: Partial<Row>) => setRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const add = (c: Customer) => {
@@ -282,7 +282,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
           ))}
         </ul>
       )}
-      {q.trim().length >= 3 && !searching && hits.length === 0 && <p className="text-xs text-slate-500">Không tìm thấy khách hàng.</p>}
+      {q.trim().length >= 3 && !searching && hits.length === 0 && <p className="text-xs text-slate-500">Không tìm thấy khách hàng giao mẫu về chi nhánh này.</p>}
 
       {rows.map((r, i) => (
         <div key={r.c.customer_id} className="border border-slate-200 rounded-xl p-3 space-y-2">

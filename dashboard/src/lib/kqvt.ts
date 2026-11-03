@@ -38,7 +38,7 @@
  * one — verified on throwaway prod jobs 2026-10-18. Only a stop still "Chờ lấy" is ever
  * touched, so no photo a driver already took is at stake.
  */
-import { BASE_URL, cancelJob, createJob, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
+import { BASE_URL, assignJob, cancelJob, createJob, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
 import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
 import { roadDistancesFromPoint } from "./distance-cache";
@@ -48,7 +48,7 @@ import { PSC_ROUTES } from "./psc-routes-data";
 import { shortCode } from "./psc-dup";
 import { returnRideable, shiftMappingsForPsc, subToCoveredDriver } from "./return-trips";
 import { sbSelect } from "./supabase-rest";
-import { vnHoursMinutes, vnTimestamp } from "./time";
+import { parseVnTimestamp, vnHoursMinutes, vnTimestamp } from "./time";
 import type { Config, FailedJob, Job, LogLevel } from "./types";
 import type { LeaveEntry } from "./leave-config";
 
@@ -79,6 +79,9 @@ export interface KqvtEntry {
   origin?: string; at?: string; hops?: string[]; leg_job?: number; leg_checked_ms?: number;
   /** A direct PSC → client job (NEAR_KM): no collect/hand-over halves. */
   direct?: boolean;
+  /** A smart client's collect job, made unassigned: the cycle gives it to the driver of
+   *  the client's sample pickup once they are at the PSC (smartCollector). */
+  smart?: boolean;
 }
 
 export const NEAR_KM = 3;
@@ -135,6 +138,14 @@ export async function defaultDropoff(clientId: string): Promise<string | null> {
     "master_clients_read", `select=default_dropoff_id&customer_id=eq.${clientId}&limit=1`,
   ).catch(() => []);
   return rows[0]?.default_dropoff_id ?? null;
+}
+
+/** The clients a PSC may book for: those whose default drop-off is that PSC — none on
+ *  the master list means D001 (supervisor, 2026-11-03). Throws when the list is unreadable. */
+export async function pscClients(psc: string): Promise<Set<string>> {
+  const f = psc === LAB_CUSTOMER_ID ? `or=(default_dropoff_id.eq.${psc},default_dropoff_id.is.null)` : `default_dropoff_id=eq.${psc}`;
+  const rows = await sbSelect<{ customer_id: string }>("master_clients_read", `select=customer_id&${f}&limit=5000`);
+  return new Set(rows.map((r) => r.customer_id));
 }
 
 /** The two to-dos a return trip carries for one item: take it at `at`, leave it at the hop. */
@@ -326,6 +337,7 @@ export function bookedStatus(bid: string, ending: Ending | null, entries: KqvtEn
     return { status: `Giao trực tiếp — ${e.collector ? `${e.collector_name ?? "tài xế"}, chưa lấy` : "chờ điều phối"}`, tone: "wait", job: e.job_id };
   }
   if (e.holder) return { status: `${e.holder_name ?? "Tài xế"} đã lấy, sẽ giao kèm chuyến lấy mẫu tại khách`, tone: "move", job: e.job_id };
+  if (e.smart && !e.collector) return { status: `Chờ tài xế đi lấy mẫu tại khách ghé ${e.psc_name}`, tone: "wait", job: e.job_id };
   return { status: `Chờ ${e.collector_name ?? "điều phối"} lấy tại ${e.psc_name}`, tone: "wait", job: e.job_id };
 }
 
@@ -402,15 +414,18 @@ async function lookupJob(jobId: number, env: Env): Promise<CollectState | "gone"
 }
 
 /**
- * Who collects: the client's fixed driver, else — smart client — the candidate on duty
- * now whose live position is nearest the PSC (straight line: one call, no road
- * lookups; the hand-over then follows whoever it was). Null = leave it to the dispatcher.
+ * Who collects: the client's fixed driver, else — smart client, `smartNearest` only (the
+ * direct job) — the candidate on duty now whose live position is nearest the PSC
+ * (straight line: one call, no road lookups). A smart client's one-stop collect job
+ * passes false and waits for smartCollector. Null = nobody at booking.
  */
 export async function pickCollector(
   config: Config, leave: LeaveEntry[], clientId: string, psc: { lat: number | null; lon: number | null }, env: Env,
+  smartNearest: boolean,
 ): Promise<{ driverId: string; name: string | null } | null> {
   const fixed = resolveFixedDriver(config, clientId, new Date(), leave, null, { previewOnly: true });
   if (fixed) return { driverId: fixed.driverId, name: fixed.name };
+  if (!smartNearest) return null;
   const choices = resolveDriverChoices(config, clientId, "", leave);
   if (!choices.ok || psc.lat == null || psc.lon == null) return null;
   const live = await getLiveDrivers(env).catch(() => null);
@@ -470,15 +485,49 @@ export async function appendStopTodos(
   ) ? "ok" : "failed";
 }
 
+/** An assigned, not-started sample pickup at the client (never a KQ/VT job itself). */
+const pickupAtClient = (j: Job, clientId: string) =>
+  !!j.delivery_driver_id &&
+  j.job_status_id !== 7 &&
+  !(j.labels ?? []).includes(PSC_DELIVERY_LABEL) &&
+  (j.stops ?? []).some((s) => s.stop_type_id === 1 && s.customer_id === clientId && s.stop_status_id === 1);
+
 /** The holder's not-started sample pickup at the client, if today's lists have one. */
 export function handoverTarget(e: KqvtEntry, jobs: Job[]): Job | null {
-  return jobs.find((j) =>
-    j.delivery_driver_id === e.holder &&
-    j.job_status_id !== 7 &&
-    !(j.labels ?? []).includes(PSC_DELIVERY_LABEL) &&
-    (j.stops ?? []).some((s) => s.stop_type_id === 1 && s.customer_id === e.client_id && s.stop_status_id === 1),
-  ) ?? null;
+  return jobs.find((j) => j.delivery_driver_id === e.holder && pickupAtClient(j, e.client_id)) ?? null;
 }
+
+export const AT_PSC_RECENT_MS = 5 * 60_000;
+
+/**
+ * Who takes a smart client's collect job (supervisor, 2026-11-04): a driver who holds
+ * the client's not-started sample pickup AND is at the PSC — their last completed stop
+ * is a drop-off there, or they completed one there in the last 5 minutes. So the items
+ * leave with the driver already going to that client. Null = nobody yet; ask next cycle.
+ */
+export function smartCollector(e: KqvtEntry, jobs: Job[], now: number): { driverId: string; name: string | undefined } | null {
+  for (const p of jobs) {
+    if (!pickupAtClient(p, e.client_id)) continue;
+    const id = p.delivery_driver_id!;
+    let last: { t: number; atPsc: boolean } | null = null, recent = false;
+    for (const j of jobs) {
+      if (j.delivery_driver_id !== id) continue;
+      for (const s of j.stops ?? []) {
+        const t = s.stop_status_id === 4 ? parseVnTimestamp(s.activity_completed_ts).getTime() : NaN;
+        if (!Number.isFinite(t)) continue;
+        const atPsc = s.stop_type_id === 2 && s.customer_id === e.psc;
+        if (!last || t > last.t) last = { t, atPsc };
+        if (atPsc && now - t <= AT_PSC_RECENT_MS) recent = true;
+      }
+    }
+    if (recent || last?.atPsc) return { driverId: id, name: driverName(p) };
+  }
+  return null;
+}
+
+/** A client the config serves with a smart pool (two or more candidates). */
+export const isSmartClient = (config: Config, clientId: string) =>
+  config.mappings.some((m) => m.customer_id === clientId && m.smart_driver_id.length >= 2);
 
 export function waitingTooLong(e: KqvtEntry, now: number): boolean {
   return now - (e.collected_ms ?? e.created_ms) > WAIT_ALERT_MS;
@@ -552,14 +601,15 @@ export async function kqvtCycle(
    *  driver. A failed create is retried next cycle — the item stays on the list. */
   const arrive = async (e: KqvtEntry) => {
     const psc = PSC_ROUTES.find((r) => r.pickup === e.psc);
-    const who = psc ? await pickCollector(config, leave, e.client_id, psc, env).catch(() => null) : null;
+    const who = psc ? await pickCollector(config, leave, e.client_id, psc, env, false).catch(() => null) : null;
     const res = await createCollectJob(e, `Chuyển từ ${pscName(e.origin!)} theo chuyến về`, who, env);
     if (!res.jobId) {
       log(`Giao KQ/VT FAILED - chưa tạo được chuyến lấy tại ${e.psc_name} (${res.status}) | ${pscName(e.origin!)} → ${e.client_name}`, "WARN");
       return;
     }
     const waitKey = e.job_id;
-    Object.assign(e, { job_id: res.jobId, hops: undefined, collector: res.driverId ?? undefined, collector_name: res.driverId ? who?.name ?? undefined : undefined });
+    Object.assign(e, { job_id: res.jobId, hops: undefined, collector: res.driverId ?? undefined, collector_name: res.driverId ? who?.name ?? undefined : undefined,
+      smart: (!res.driverId && isSmartClient(config, e.client_id)) || undefined });
     await savePending(e);
     await dropPending(waitKey);
     log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${res.driverId ? who?.name ?? "tài xế" : "chờ điều phối"} | ${e.psc_name} → ${e.client_name}`, "OK");
@@ -613,6 +663,18 @@ export async function kqvtCycle(
       }
       const verdict = e.direct ? "wait" : collectVerdict(collect);
       if (verdict === "drop") { await dropPending(e.job_id); await closeItems(e, { state: "huy", job: e.job_id }); continue; }
+      // A smart client's collect job, still nobody's: give it to the driver of the
+      // client's pickup once they are at the PSC. Left alone once anyone holds it.
+      if (verdict === "wait" && e.smart && collect && collect !== "gone" && !collect.delivery_driver_id) {
+        const who = smartCollector(e, jobsToday, now);
+        const res = who ? await assignJob(who.driverId, e.job_id, env).catch(() => null) : null;
+        if (who && res && res.status >= 200 && res.status < 300) {
+          e.collector = who.driverId;
+          e.collector_name = who.name;
+          await savePending(e);
+          log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${who.name ?? "tài xế"} (đang ở PSC, có chuyến lấy mẫu tại khách) | ${e.psc_name} → ${e.client_name}`, "OK");
+        }
+      }
       if (verdict === "collected" && collect && collect !== "gone") {
         e.holder = collect.delivery_driver_id!;
         e.holder_name = e.holder === e.collector ? e.collector_name : driverName(collect as Job);

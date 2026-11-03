@@ -5,7 +5,7 @@
  * in a smart ranking, and who collects for a smart client.
  */
 import assert from "node:assert/strict";
-import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
+import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
 import { returnRideable } from "../src/lib/return-trips";
 import { PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "../src/lib/job-filters";
 import type { Job, Mapping } from "../src/lib/types";
@@ -148,4 +148,31 @@ assert.match(cancelBlock(tagged({ job_id: 5, direct: true, collected_ms: 1 }))!,
 // Far by straight line → no road lookup at all, not near (D001 → D014 is ~30 km).
 assert.equal(await isNear({ lat: 10.775, lon: 106.673 }, { lat: 10.979, lon: 106.655 }), false);
 assert.equal(await isNear({ lat: 10.775, lon: 106.673 }, null), false);
+
+// Smart client: the collect job goes to the driver of the client's not-started pickup,
+// only once they are at the PSC — last completed stop a drop-off there, or one there
+// in the last 5 minutes.
+{
+  const now = Date.parse("2026-11-04T10:00:00+07:00");
+  const at = (hm: string) => `2026-11-04 ${hm}:00`;
+  const done = (id: number, driver: string, stops: [number, string, string][]) => ({
+    job_id: id, job_status_id: 5, delivery_driver_id: driver, labels: [],
+    stops: stops.map(([type, customer, ts]) => ({ stop_type_id: type, customer_id: customer, stop_status_id: 4, activity_completed_ts: at(ts) })),
+  }) as unknown as Job;
+  const e = { ...entry, holder: undefined, smart: true };
+  const pickupH = job(20, "H", 1);
+  // Last stop a drop-off at the PSC, an hour ago → yes.
+  assert.equal(smartCollector(e, [pickupH, done(21, "H", [[1, "A", "08:30"], [2, "PSC", "09:00"]])], now)?.driverId, "H");
+  // Left the PSC since (last stop elsewhere, PSC drop-off 20 min ago) → no.
+  assert.equal(smartCollector(e, [pickupH, done(21, "H", [[2, "PSC", "09:40"]]), done(22, "H", [[2, "B", "09:50"]])], now), null);
+  // ...but a PSC drop-off within 5 minutes still counts.
+  assert.equal(smartCollector(e, [pickupH, done(21, "H", [[2, "PSC", "09:56"]]), done(22, "H", [[2, "B", "09:58"]])], now)?.driverId, "H");
+  // At the PSC but no pickup at the client, or the pickup already started → nobody.
+  assert.equal(smartCollector(e, [done(21, "H", [[2, "PSC", "09:00"]])], now), null);
+  assert.equal(smartCollector(e, [job(20, "H", 2), done(21, "H", [[2, "PSC", "09:00"]])], now), null);
+  // Only collecting AT the PSC (a pickup there) is not "ended up" there.
+  assert.equal(smartCollector(e, [pickupH, done(21, "H", [[1, "PSC", "09:59"]])], now), null);
+  // The waiting status on /qr.
+  assert.match(bookedStatus("b1", null, [tagged({ job_id: 5, smart: true })]).status, /Chờ tài xế đi lấy mẫu tại khách ghé D030/);
+}
 console.log("kqvt: ok");
