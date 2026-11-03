@@ -173,7 +173,7 @@ try {
   await POST(webhookRequest("hello qua lấy mẫuxyz", { chat: { id: "zgr-request", chat_type: "GROUP" } }));
   assert.equal(creates.length, 1, "negated, request-off and partial-word messages never create a trip");
   await POST(webhookRequest("@Bot Điều Phối X hướng dẫn", { chat: { id: "zgr-request", chat_type: "GROUP" } }));
-  assert.equal(lastReply(), "💡 Gợi ý 💡 khách hàng có thể tag @Bot Điều Phối X và nhắn “qua lấy mẫu” hoặc “đặt chuyến” để có thể được hỗ trợ lấy mẫu nhanh nhất.");
+  assert.equal(lastReply(), "💡 Gợi ý 💡 khách hàng có thể tag **@Bot Điều Phối X** và nhắn “qua lấy mẫu” hoặc “đặt chuyến” để có thể được hỗ trợ lấy mẫu nhanh nhất.");
   const beforeNoGuide = sent.length;
   await POST(webhookRequest("@Bot Điều Phối X hướng dẫn", { chat: { id: pharmacyChat, chat_type: "GROUP" } }));
   assert.equal(sent.length, beforeNoGuide, "no tip where trip request is off");

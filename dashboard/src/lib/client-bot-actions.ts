@@ -26,7 +26,7 @@ export function guideText(bot: Pick<ClientBot, "name">, group: ClientBotGroup, k
   if (!group.request || !keywords.length) return null;
   const words = keywords.slice(0, 3).map(k => `“${k}”`);
   const said = words.length > 1 ? `${words.slice(0, -1).join(", ")} hoặc ${words.at(-1)}` : words[0];
-  return `💡 Gợi ý 💡 khách hàng có thể tag ${mentionOf(bot)} và nhắn ${said} để có thể được hỗ trợ lấy mẫu nhanh nhất.`;
+  return `💡 Gợi ý 💡 khách hàng có thể tag **${mentionOf(bot)}** và nhắn ${said} để có thể được hỗ trợ lấy mẫu nhanh nhất.`;
 }
 
 /** The client's own words for the pickup note: the bot's @mention removed, the rest
