@@ -5,12 +5,19 @@
  *   npx tsx scripts/cham-cong-tap.test.mts
  */
 import assert from "node:assert/strict";
-import { positionOf, pickPlace, CHAM_CONG_RADIUS_M, type Place } from "../src/lib/cham-cong-geo";
+import { positionOf, pickPlace, parseLiveTs, CHAM_CONG_RADIUS_M, type Place } from "../src/lib/cham-cong-geo";
 import { nextPunch, sameNext, type PunchTask } from "../src/lib/cham-cong-state";
 
 const NOW = new Date("2026-11-03T07:20:00+07:00");
-const live = (lastOnlineTs: string | null, latitude: number | null = 10.77846, longitude: number | null = 106.67974) =>
-  ({ deliveryDriverId: "d", latitude, longitude, lastOnlineTs });
+const live = (positionUpdatedTs: string | null, latitude: number | null = 10.77846, longitude: number | null = 106.67974) =>
+  ({ deliveryDriverId: "d", latitude, longitude, positionUpdatedTs, lastOnlineTs: "2026-11-03 07:19:59.000000+07" });
+
+// ── Cartrack live-list time format (seen on prod 2026-11-03) ──
+assert.equal(parseLiveTs("2026-11-03 17:56:51.704844+07"), Date.parse("2026-11-03T17:56:51.704+07:00"));
+assert.equal(parseLiveTs("2026-11-03 17:56:51.70484+07"), Date.parse("2026-11-03T17:56:51.704+07:00"), "5-digit fraction");
+assert.equal(parseLiveTs("2026-11-03 17:56:51"), Date.parse("2026-11-03T17:56:51+07:00"), "bare = VN time");
+assert.equal(parseLiveTs("2026-11-03 10:56:51+00"), Date.parse("2026-11-03T17:56:51+07:00"));
+assert.ok(Number.isNaN(parseLiveTs("hôm qua")) && Number.isNaN(parseLiveTs(null)));
 
 // ── position ──
 assert.deepEqual(positionOf(undefined, NOW), { ok: false, reason: "no_position" });
@@ -20,6 +27,8 @@ assert.deepEqual(positionOf(live(null), NOW), { ok: false, reason: "stale" }, "n
 assert.deepEqual(positionOf(live("hôm qua"), NOW), { ok: false, reason: "stale" }, "unparseable is stale, never fresh");
 assert.deepEqual(positionOf(live("2026-11-03 07:14:59"), NOW), { ok: false, reason: "stale", age_s: 301 });
 const fresh = positionOf(live("2026-11-03 07:15:00"), NOW);
+const real = positionOf(live("2026-11-03 07:18:20.704844+07"), NOW);
+assert.ok(real.ok && real.age_s === 99, "the format Cartrack actually sends is fresh");
 assert.ok(fresh.ok && fresh.age_s === 300, "exactly 5 min is still fresh");
 
 // ── place ──

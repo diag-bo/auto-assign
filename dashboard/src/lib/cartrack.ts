@@ -116,6 +116,8 @@ export type LiveDriver = {
   longitude?: number | null;
   isLoggedIn?: boolean | null;
   lastOnlineTs?: string | null;
+  /** When latitude/longitude were taken: "2026-11-03 17:56:51.704844+07". */
+  positionUpdatedTs?: string | null;
   onBreakSinceTs?: string | null;
   shiftTimeStart?: string | null;
   shiftTimeEnd?: string | null;

@@ -18,7 +18,17 @@ type Next =
   | { action: "wait"; type: Type; until: string };
 interface Task { job_id: number; type: Type; done: boolean; time: string | null; place: string | null }
 interface State { driver_name: string; next: Next; tasks: Task[]; timings: Record<string, number> }
-interface Tap { at: string; label: string; status: number; roundTrip: number; timings: Record<string, number>; message: string }
+interface Tap { at: string; label: string; status: number; roundTrip: number; timings: Record<string, number>; message: string; detail: string }
+
+/** Why the server said what it said, for the pilot: refusal reason, position age, distance. */
+function detailOf(d: { reason?: string; position_age_s?: number | null; distance_m?: number | null; place?: string } | null): string {
+  if (!d) return "";
+  return [
+    d.reason,
+    d.position_age_s != null ? `vị trí ${d.position_age_s}s trước` : null,
+    d.distance_m != null ? `${d.distance_m}m${d.place ? ` tới ${d.place}` : ""}` : null,
+  ].filter(Boolean).join(" · ");
+}
 
 const word = (t: Type) => (t === "check-in" ? "vào ca" : "ra ca");
 const hm = (iso: string) => new Date(iso).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
@@ -132,7 +142,7 @@ export default function ChamCongTapPage() {
     const roundTrip = Math.round(performance.now() - t);
     if (res?.status === 401) { setBusy(false); return setView("login"); }
     const text: string = data?.message ?? data?.error ?? "Không kết nối được, vui lòng thử lại.";
-    setTaps((list) => [{ at: new Date().toISOString(), label: label(state.next), status: res?.status ?? 0, roundTrip, timings: data?.timings ?? {}, message: text }, ...list].slice(0, 10));
+    setTaps((list) => [{ at: new Date().toISOString(), label: label(state.next), status: res?.status ?? 0, roundTrip, timings: data?.timings ?? {}, message: text, detail: detailOf(data) }, ...list].slice(0, 10));
     setNotice({ ok: !!data?.ok && data?.completed !== false, text });
     if (data?.ok) {
       // Hold the confirmation in place of the button, so a second tap hits nothing.
@@ -211,7 +221,8 @@ export default function ChamCongTapPage() {
               <section className="rounded-lg bg-white border p-3 space-y-3">
                 <h2 className="font-semibold">Thời gian chờ (thử nghiệm)</h2>
                 <div>
-                  <p className="text-sm text-gray-500 mb-1">{taps[0].label} · HTTP {taps[0].status} · {hm(taps[0].at)}</p>
+                  <p className="text-sm text-gray-500">{taps[0].label} · HTTP {taps[0].status} · {hm(taps[0].at)}</p>
+                  {taps[0].detail && <p className="text-sm text-gray-500 mb-1">{taps[0].detail}</p>}
                   <Timings tap={taps[0]} />
                 </div>
                 {taps.length > 1 && (

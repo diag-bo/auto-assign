@@ -1,6 +1,5 @@
 import { getCustomerById, type Env, type LiveDriver } from "./cartrack";
 import { haversineKm } from "./distance";
-import { parseVnTimestamp } from "./time";
 
 /**
  * One-tap chấm công: is the driver standing at a place they may punch at?
@@ -28,13 +27,26 @@ export type PositionVerdict =
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
+/** A delivery_drivers_list time, "2026-11-03 17:56:51.704844+07" (seen live
+ *  2026-11-03; the fraction is 5 or 6 digits). Unlike the REST stamps it carries
+ *  its own offset, so parseVnTimestamp — which appends +07:00 — reads it as NaN.
+ *  A bare "YYYY-MM-DD HH:MM:SS" is VN time. NaN for anything else. */
+export function parseLiveTs(ts: string | null | undefined): number {
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}(?::?\d{2})?)?$/.exec(ts?.trim() ?? "");
+  if (!m) return NaN;
+  const ms = (m[3] ?? "").slice(0, 3).padEnd(3, "0");
+  const off = !m[4] ? "+07:00" : m[4] === "Z" ? "Z" : m[4].length === 3 ? `${m[4]}:00` : m[4].includes(":") ? m[4] : `${m[4].slice(0, 3)}:${m[4].slice(3)}`;
+  return Date.parse(`${m[1]}T${m[2]}.${ms}${off}`);
+}
+
 /** The driver's live Cartrack position, if it is fresh enough to judge a tap by.
- *  (0, 0) is a failed fix, not a place in Vietnam. An unparseable lastOnlineTs is
- *  stale, never fresh: a clock we cannot read cannot vouch for anything. */
+ *  Freshness is positionUpdatedTs — when the fix was taken — not lastOnlineTs,
+ *  which only says the app was talking. (0, 0) is a failed fix, not a place in
+ *  Vietnam. An unreadable time is stale, never fresh. */
 export function positionOf(live: LiveDriver | undefined, now: Date): PositionVerdict {
   const lat = live?.latitude, lon = live?.longitude;
   if (!finite(lat) || !finite(lon) || (lat === 0 && lon === 0)) return { ok: false, reason: "no_position" };
-  const at = parseVnTimestamp(live?.lastOnlineTs).getTime();
+  const at = parseLiveTs(live?.positionUpdatedTs);
   if (!Number.isFinite(at)) return { ok: false, reason: "stale" };
   const age_s = Math.max(0, Math.round((now.getTime() - at) / 1000));
   if (age_s > POSITION_MAX_AGE_MIN * 60) return { ok: false, reason: "stale", age_s };
