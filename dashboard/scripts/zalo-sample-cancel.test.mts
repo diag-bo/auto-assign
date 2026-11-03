@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { POST } from "../src/app/api/zalo/sample-cancel/route";
 import { cancelableScheduleJobs, classifyPickupReply } from "../src/lib/scheduled-pickup-cancel";
-import { SAMPLE_PICKUP_CUSTOMER_ID } from "../src/lib/scheduled-pickup-reminder";
+const SAMPLE_PICKUP_CUSTOMER_ID = "81f0d4a6-acf9-11f1-9378-fa163ee8d8ac";
 import type { Job } from "../src/lib/types";
 
 const cases: Record<"cancel" | "review" | "ignore", string[]> = {
@@ -67,12 +67,12 @@ const sends: { chat_id: string; text: string }[] = [];
 try {
   process.env.ZALO_SAMPLE_BOT_TOKEN = "test-token";
   process.env.ZALO_SAMPLE_WEBHOOK_SECRET = "test-secret";
-  delete process.env.ZALO_SAMPLE_CHAT_ID;
   let jobReads = 0;
   process.env.CARTRACK_AUTH = "test-auth";
   process.env.SUPABASE_URL = "https://sb.test";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
   let groupRows: object[] = [];
+  const sampleRow = (chat_id: string) => ({ bot: "giao_nhan_mau", chat_id, customer_id: SAMPLE_PICKUP_CUSTOMER_ID, label: "", remind: true, cancel: true });
   globalThis.fetch = async (url, init) => {
     if (String(url).startsWith("https://sb.test/rest/v1/client_bot_groups")) return Response.json(groupRows);
     if (String(url).startsWith("https://sb.test/rest/v1/client_bots?")) return Response.json([
@@ -107,12 +107,12 @@ try {
   await POST(request(null));
   assert.equal(sends.length, 4, "Unauthorized/private/cancellation messages must not act during setup");
   assert.equal(jobReads, 0);
-  process.env.ZALO_SAMPLE_CHAT_ID = "test-group";
+  groupRows = [sampleRow("test-group")];
   await POST(request(message("hôm nay có mẫu")));
-  process.env.ZALO_SAMPLE_CHAT_ID = "another-group";
+  groupRows = [sampleRow("another-group")];
   await POST(request(message("hôm nay không có mẫu")));
   assert.equal(jobReads, 0, "Positive replies and other groups cannot trigger a cancellation lookup");
-  process.env.ZALO_SAMPLE_CHAT_ID = "test-group";
+  groupRows = [sampleRow("test-group")];
   const negatives = ["@Bot Giao nhận mẫu Dạ hong có ạ", "ko mẫu", "không mẫu", "k mẫu", "ko mẫu nha", "chưa có mẫu nhé", "dạ hôm nay không có mẫu ạ", "@Bot Giao nhận mẫu dạ ko mẫu a", "dạ ko mẫu a", "không có mẫu", "hôm nay không có mẫu", "hôm nay k có mẫu", "ko có", "chưa có", "k có", "ko có mẫu", "chưa có mẫu", "@Bot Giao nhận mẫu ko có"];
   for (const text of negatives) {
     await POST(request({ ok: true, result: message(text) }));
@@ -125,7 +125,6 @@ try {
   assert.equal(jobReads, readsBeforeReview, "mixed and future-date replies must never read or cancel Cartrack jobs");
   assert.ok(sends.slice(4 + negatives.length).every(reply => reply.chat_id === "test-group" && reply.text.includes("Bot chưa huỷ")));
   // A table row serves its own customer; cancel off keeps the group silent.
-  delete process.env.ZALO_SAMPLE_CHAT_ID;
   groupRows = [{ bot: "giao_nhan_mau", chat_id: "test-group", customer_id: "other-customer", label: "", remind: true, cancel: false }];
   const beforeOff = { reads: jobReads, sent: sends.length };
   await POST(request(message("không có mẫu")));

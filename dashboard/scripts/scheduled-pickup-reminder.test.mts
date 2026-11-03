@@ -16,6 +16,7 @@ const groupRows = [
   { bot: "dieu_phoi", chat_id: "zgr-1c7aa981bbcf52910bde", customer_id: "51bfb168-446f-11ed-888f-506b8dbc8dfb", label: "", remind: true, cancel: true },
   { bot: "dieu_phoi", chat_id: "zgr-5f2b2b46331ada44830b", customer_id: "f88dfab6-b522-11ee-bb52-506b8d9879b5", label: "", remind: true, cancel: true },
   { bot: "dieu_phoi", chat_id: "zgr-no-remind", customer_id: "no-remind-customer", label: "", remind: false, cancel: true },
+  { bot: "giao_nhan_mau", chat_id: "sample-group", customer_id: "81f0d4a6-acf9-11f1-9378-fa163ee8d8ac", label: "", remind: true, cancel: true },
 ];
 
 const { PROXY_DRIVER_ID } = await import("../src/lib/cartrack");
@@ -177,9 +178,8 @@ try {
   // Both bots use the same wording and bold their own display name.
   failSend = false;
   process.env.ZALO_SAMPLE_BOT_TOKEN = "sample-token";
-  process.env.ZALO_SAMPLE_CHAT_ID = "sample-group";
-  const { remindScheduledPickup, SAMPLE_PICKUP_CUSTOMER_ID } = await import("../src/lib/scheduled-pickup-reminder");
-  await remindScheduledPickup(job(601, { stops: [{ ...job(601).stops[0], customer_id: SAMPLE_PICKUP_CUSTOMER_ID }] }), "prod", log);
+  const { remindScheduledPickup } = await import("../src/lib/scheduled-pickup-reminder");
+  await remindScheduledPickup(job(601, { stops: [{ ...job(601).stops[0], customer_id: "81f0d4a6-acf9-11f1-9378-fa163ee8d8ac" }] }), "prod", log);
   assert.deepEqual(sends.at(-1), {
     url: "https://bot-api.zaloplatforms.com/botsample-token/sendMessage",
     body: { chat_id: "sample-group", text: message.replace("@Bot Điều Phối X", "@Bot Giao nhận mẫu"), parse_mode: "markdown" },

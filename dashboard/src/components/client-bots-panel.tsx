@@ -10,7 +10,7 @@ import type { ClientBotGroup } from "@/lib/client-bots";
 
 type Bot = { id: string; name: string; legacy: boolean; configured: boolean };
 type Client = { id: string; name: string };
-type GroupDraft = Omit<ClientBotGroup, "from_env"> & { previous?: { bot: string; chat_id: string } };
+type GroupDraft = ClientBotGroup & { previous?: { bot: string; chat_id: string } };
 type BotDraft = { id?: string; name: string; token: string; legacy?: boolean };
 type Action = "remind" | "cancel" | "request" | "guide";
 
@@ -120,11 +120,11 @@ export function ClientBotsPanel() {
                 <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium">{groupLabel(g)}</div>
-                  <div className="break-all font-mono text-[11px] text-slate-500">{g.chat_id}{g.from_env && " · từ env ZALO_SAMPLE_CHAT_ID"}</div>
+                  <div className="break-all font-mono text-[11px] text-slate-500">{g.chat_id}</div>
                 </div>
                 <div className="flex shrink-0 gap-1">
-                  <Button variant="ghost" size="sm" aria-label="Sửa nhóm" disabled={busy} onClick={() => { setBotDraft(null); setGroupDraft({ ...g, previous: g.from_env ? undefined : { bot: g.bot, chat_id: g.chat_id } }); }}><Pencil aria-hidden="true" className="size-4" strokeWidth={1.75} /></Button>
-                  {!g.from_env && <Button variant="ghost" size="sm" aria-label="Xoá nhóm" disabled={busy} onClick={() => removeGroup(g, bot)}><Trash2 aria-hidden="true" className="size-4 text-red-600" strokeWidth={1.75} /></Button>}
+                  <Button variant="ghost" size="sm" aria-label="Sửa nhóm" disabled={busy} onClick={() => { setBotDraft(null); setGroupDraft({ ...g, previous: { bot: g.bot, chat_id: g.chat_id } }); }}><Pencil aria-hidden="true" className="size-4" strokeWidth={1.75} /></Button>
+                  <Button variant="ghost" size="sm" aria-label="Xoá nhóm" disabled={busy} onClick={() => removeGroup(g, bot)}><Trash2 aria-hidden="true" className="size-4 text-red-600" strokeWidth={1.75} /></Button>
                 </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">

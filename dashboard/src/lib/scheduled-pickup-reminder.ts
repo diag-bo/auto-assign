@@ -5,7 +5,6 @@ import type { Env } from "./cartrack";
 import type { Job, LogLevel } from "./types";
 import { sendZaloMessage } from "./zalo";
 
-export { SAMPLE_PICKUP_CUSTOMER_ID } from "./client-bots";
 export const PICKUP_REMINDER_CLAIM = "fixed-pickup-reminder";
 const MESSAGE = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi ạ. Bên mình hôm nay có mẫu không, cho Diag xin xác nhận với ạ?";
 

@@ -13,14 +13,11 @@ export type ClientBot = { id: string; name: string; token: string | null; webhoo
 export type ClientBotGroup = {
   bot: string; chat_id: string; customer_id: string; label: string;
   remind: boolean; cancel: boolean; request: boolean; guide: boolean; guide_time: string;
-  /** Only in ZALO_SAMPLE_CHAT_ID, not yet in the table. Saving it moves it in. */
-  from_env?: boolean;
 };
 
 /** The bots that predate the table: env tokens, webhooks on their own routes
  *  (Điều Phối X also answers revenue), so the panel never re-registers them. */
 export const LEGACY_BOTS = ["dieu_phoi", "giao_nhan_mau", "an_sinh"];
-export const SAMPLE_PICKUP_CUSTOMER_ID = "81f0d4a6-acf9-11f1-9378-fa163ee8d8ac";
 
 export const mentionOf = (bot: Pick<ClientBot, "name">) => `@${bot.name}`;
 
@@ -39,16 +36,10 @@ export async function clientBots(): Promise<ClientBot[]> {
 /** Every group. Throws when Supabase can't be read — callers in a client group
  *  must then stay silent, not fall through to the revenue bot's replies. */
 export async function clientBotGroups(): Promise<ClientBotGroup[]> {
-  const rows = await sbSelect<ClientBotGroup>("client_bot_groups",
+  // The table is the whole list. ZALO_SAMPLE_CHAT_ID (TECCO) is no longer read: that
+  // group was closed, and an env group could not be removed from the panel.
+  return sbSelect<ClientBotGroup>("client_bot_groups",
     "select=bot,chat_id,customer_id,label,remind,cancel,request,guide,guide_time&order=bot.asc,label.asc");
-  // ponytail: the sample group predates the table and lives in env; it shows as a row
-  // until saved. Removing it for good means clearing ZALO_SAMPLE_CHAT_ID.
-  const envChat = process.env.ZALO_SAMPLE_CHAT_ID?.trim();
-  if (envChat && !rows.some(r => r.bot === "giao_nhan_mau" && r.chat_id === envChat)) {
-    rows.push({ bot: "giao_nhan_mau", chat_id: envChat, customer_id: SAMPLE_PICKUP_CUSTOMER_ID,
-      label: "", remind: true, cancel: true, request: false, guide: false, guide_time: "07:30", from_env: true });
-  }
-  return rows;
 }
 
 export async function requestKeywords(): Promise<string[]> {

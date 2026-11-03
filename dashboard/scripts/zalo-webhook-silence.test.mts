@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import { classifyPickupReply, cancelableScheduleJobs } from "../src/lib/scheduled-pickup-cancel";
-import { SAMPLE_PICKUP_CUSTOMER_ID } from "../src/lib/scheduled-pickup-reminder";
+const SAMPLE_PICKUP_CUSTOMER_ID = "81f0d4a6-acf9-11f1-9378-fa163ee8d8ac";
 import { vnDate } from "../src/lib/time";
 import { PROXY_DRIVER_ID } from "../src/lib/cartrack";
 import type { Job } from "../src/lib/types";
