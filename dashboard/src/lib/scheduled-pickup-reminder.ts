@@ -29,7 +29,7 @@ export function clientBots(): Record<string, ClientBot> {
     // Secret derived from the token: whoever holds the token controls the bot anyway,
     // and it keeps a new bot to one env var.
     "an-sinh": {
-      customerId: AN_SINH_CUSTOMER_ID, mention: "@Bot Trợ Lý Diag", token: ansinh, chatId: "",
+      customerId: AN_SINH_CUSTOMER_ID, mention: "@Bot Trợ Lý Diag", token: ansinh, chatId: "zgr-f12287b103e4eabab3f5",
       secret: ansinh && createHash("sha256").update(ansinh).digest("hex").slice(0, 32),
     },
   };
