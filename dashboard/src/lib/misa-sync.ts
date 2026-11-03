@@ -91,7 +91,7 @@ export async function runMisaSyncStep(id:number,hop=MAX_SELF_CALLS) {
       await syncCartrackProfiles();invalidateDriversCache();await invalidateConfigCache();run.phase="misa";
       // Once a morning: re-lock any driver whose stop-arrival check was switched off in
       // Cartrack. Its own try/catch — a failed sweep must never hold up MISA's leave.
-      if(run.daily)await lockOpenGeofences().then(r=>console.log(`[morning-sync] geofence: ${r.locked.length} locked, ${r.failed.length} failed`))
+      if(run.daily)await lockOpenGeofences().then(r=>console.log(`[morning-sync] geofence: ${r.locked.length} locked, ${r.radiusReset} radius reset, ${r.failed.length} failed`))
         .catch(e=>console.error("[morning-sync] geofence sweep:",e instanceof Error?e.message:e));
     }else if(run.phase==="metadata") {
       // Every client code each morning (~1,600, ~0.35 s each), 10 at a time with a 0.3 s

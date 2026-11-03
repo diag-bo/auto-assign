@@ -156,32 +156,40 @@ const STAY_OPEN = new Set([
  * RPC per 100), locks each one found open that is not exempt and not inside a live
  * bypass, and tells the admin group who was locked.
  */
-export async function lockOpenGeofences(env: Env = "prod"): Promise<{ locked: string[]; failed: string[] }> {
+export async function lockOpenGeofences(env: Env = "prod"): Promise<{ locked: string[]; failed: string[]; radiusReset: number }> {
   const drivers = (await getDrivers(env)).filter((d) => d.is_active && !STAY_OPEN.has(d.delivery_driver_id));
   if (!drivers.length) throw new Error("Không đọc được danh sách tài xế");
   const live = new Set(((await getRedis()?.zrange<string[]>(KEY, 0, -1)) ?? []).map((m) => m.split("|")[1]));
-  const open: { id: string; name: string }[] = [];
+  const open: { id: string; name: string; off: boolean }[] = [];
   for (let i = 0; i < drivers.length; i += 100) {
-    const r = await jsonRpc<{ drivers: { deliveryDriverId: string; firstName: string | null; lastName: string | null; settings?: { key: string; value: string | null }[] }[] }>(
+    const r = await jsonRpc<{ drivers: { deliveryDriverId: string; firstName: string | null; lastName: string | null; settings?: { key: string; value: string | null; isDriverOverridden?: boolean }[] }[] }>(
       "delivery_get_driver_details", { data: { driverIds: drivers.slice(i, i + 100).map((d) => d.delivery_driver_id) } }, { env });
     if (!r.ok) throw new Error(`Không đọc được cài đặt tài xế: ${r.error}`);
     for (const d of r.result.drivers) {
       if (live.has(d.deliveryDriverId)) continue;
-      if (d.settings?.find((x) => x.key === RANGE_KEYS[1])?.value === "false") open.push({ id: d.deliveryDriverId, name: `${d.firstName ?? ""} ${d.lastName ?? ""}`.trim() });
+      // Any per-driver override of the range, not only "off": everyone follows the
+      // account rule (on, 400 m — supervisor, 2026-11-03), so a hand-set radius is
+      // reset too. "off" is the one the admin group needs to hear about by name.
+      const own = d.settings?.filter((x) => RANGE_KEYS.includes(x.key) && x.isDriverOverridden) ?? [];
+      if (own.length) open.push({ id: d.deliveryDriverId, name: `${d.firstName ?? ""} ${d.lastName ?? ""}`.trim(),
+        off: own.some((x) => x.key === RANGE_KEYS[1] && x.value === "false") });
     }
   }
   const locked: string[] = [], failed: string[] = [];
+  let radiusReset = 0;
   for (const d of open) {
     const err = await setGeofence(d.id, true, env);
-    if (err) { console.error(`[geofence] sweep lock failed for ${d.name}: ${err}`); failed.push(d.name); } else locked.push(d.name);
+    if (err) { console.error(`[geofence] sweep lock failed for ${d.name}: ${err}`); failed.push(d.name); }
+    else if (d.off) locked.push(d.name); else radiusReset++;
   }
   if (open.length && env === "prod") {
     const list = (names: string[]) => names.map((n) => `• ${n}`).join("\n");
     const text = [
       locked.length ? `🔒 Đã khoá lại kiểm tra vị trí (geofence) cho ${locked.length} tài xế đang bị tắt trên Cartrack:\n${list(locked)}` : "",
+      radiusReset ? `Đưa ${radiusReset} tài xế có bán kính riêng về cài đặt chung (400 m).` : "",
       failed.length ? `⚠️ Chưa khoá được ${failed.length} tài xế, cần khoá tay trên Cartrack:\n${list(failed)}` : "",
     ].filter(Boolean).join("\n\n");
     await sendZaloMessage(process.env.ZALO_ADMIN_BOT_TOKEN ?? "", process.env.ZALO_ADMIN_CHAT_ID ?? "", text).catch(() => false);
   }
-  return { locked, failed };
+  return { locked, failed, radiusReset };
 }
