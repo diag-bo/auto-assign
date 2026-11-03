@@ -8,15 +8,20 @@ import { CHAM_CONG_PREFIX } from "@/lib/job-filters";
 import { acquireCreateLock, releaseCreateLock, getChamCongIds, setChamCongIds, addChamCongId } from "@/lib/smart-log-kv";
 import { vnDate, parseVnTimestamp } from "@/lib/time";
 import { pickPlace, placeCoords, positionOf, type Place } from "@/lib/cham-cong-geo";
-import { nextPunch, sameNext, type NextPunch, type PunchTask } from "@/lib/cham-cong-state";
+import { nextPunch, sameNext, shiftMidpoint, type NextPunch, type PunchTask } from "@/lib/cham-cong-state";
+import { sbSelect } from "@/lib/supabase-rest";
+import { staffCode } from "@/lib/display-names";
+import { BO_RUNNERS } from "@/lib/pay";
 
 /**
  * /api/cham-cong/tap — one-button chấm công (PILOT, /cham-cong/tap).
  *
  * The driver comes from the Nhận Việc session only. The server decides the punch
  * (nextPunch), the place (the nearest allowed one within 200 m of the Cartrack app's
- * live position) and completes the task on the spot. A tap away from every allowed
- * place, or with no fresh position, is REFUSED: nothing is created.
+ * last known position) and completes the task on the spot. The first tap of the day
+ * is the check-in — or a check-out when it comes after the middle of today's shift —
+ * and every later one a check-out; the last one counts. A tap away from every allowed place,
+ * or with no position at all, is REFUSED: nothing is created.
  *
  * Allowed places: the Diag branches today's config names this driver on (fixed or
  * smart, any hours), plus their first stop of the day (check-in) or last (check-out).
@@ -127,6 +132,20 @@ function auth(req: NextRequest) {
   return { s };
 }
 
+/** Middle of today's working day: Lịch ca's windows plus a BO Runner's BO window
+ *  (Mon–Sat, as paidDay adds it). Null — no shift — on any failure: the first tap
+ *  is then simply the check-in, which is the pre-midpoint behaviour.
+ *  ponytail: every working row of the day, where payroll prefers its own file's rows
+ *  once imported; a midpoint only needs the rough shape of the day. */
+async function todayMidpoint(driverId: string, driverName: string, today: string): Promise<number | null> {
+  const rows = await sbSelect<{ start_time: string | null; end_time: string | null }>("driver_shifts",
+    `select=start_time,end_time&driver_id=eq.${driverId}&shift_date=eq.${today}&day_type=eq.working`).catch(() => []);
+  const windows = rows.filter((r) => r.start_time && r.end_time).map((r) => ({ start: r.start_time!, end: r.end_time! }));
+  const bo = BO_RUNNERS[staffCode(driverName)]?.window;
+  if (bo && new Date(`${today}T12:00:00+07:00`).getUTCDay() !== 0) windows.push(bo);
+  return shiftMidpoint(windows, today);
+}
+
 const hhmm = (ts: string | null) => (ts && ts.length >= 16 ? ts.slice(11, 16) : null);
 const shape = (tasks: ReturnType<typeof toTask>[]) =>
   tasks.sort((a, b) => a.job_id - b.job_id).map((t) => ({ job_id: t.job_id, type: t.type, done: t.done, time: hhmm(t.at), place: t.place }));
@@ -138,15 +157,21 @@ export async function GET(req: NextRequest) {
   const a = auth(req);
   if (a.error) return a.error;
   const ms: Ms = {};
-  const jobs = await timed(ms, "tasks", chamCongJobsToday(a.s.driver_id, vnDate(), env).catch(() => null));
+  const today = vnDate();
+  const [jobs, midpoint] = await Promise.all([
+    timed(ms, "tasks", chamCongJobsToday(a.s.driver_id, today, env).catch(() => null)),
+    timed(ms, "shift", todayMidpoint(a.s.driver_id, a.s.driver_name, today)),
+  ]);
   if (!jobs) return NextResponse.json({ error: "Không đọc được chấm công từ Cartrack, vui lòng thử lại." }, { status: 502 });
   const tasks = jobs.map(toTask);
   ms.total = Date.now() - t0;
-  return NextResponse.json({ driver_name: a.s.driver_name, next: nextPunch(tasks, new Date()), tasks: shape(tasks), timings: ms });
+  return NextResponse.json({ driver_name: a.s.driver_name, next: nextPunch(tasks, new Date(), midpoint), tasks: shape(tasks), timings: ms });
 }
 
 // ── POST { expect } — do the next punch, here and now ─────────────────────
 const TURN_ON_APP = "Vui lòng bật app Cartrack để lấy đúng vị trí, rồi thử lại.";
+// The app sends a fix only now and then; its refresh button sends one at once.
+const REFRESH_IN_APP = "Vui lòng bấm làm mới vị trí trong app Cartrack, rồi thử lại.";
 
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
@@ -164,17 +189,18 @@ export async function POST(req: NextRequest) {
   const { expect } = (await req.json().catch(() => ({}))) as { expect?: NextPunch };
 
   // Everything the tap needs, read at once: the wait is the slowest of them, not the sum.
-  const [jobs, live, places] = await Promise.all([
+  const [jobs, live, places, midpoint] = await Promise.all([
     timed(ms, "tasks", chamCongJobsToday(driverId, today, env).catch(() => null)),
     timed(ms, "position", getLiveDrivers(env).catch(() => null)),
     timed(ms, "places", allowedPlaces(driverId, today, env, ms).catch(() => null)),
+    timed(ms, "shift", todayMidpoint(driverId, a.s.driver_name, today)),
   ]);
   ms.read = Date.now() - t0;
   if (!jobs) return reply({ error: "Không đọc được chấm công từ Cartrack, vui lòng thử lại." }, 502);
 
   const tasks = jobs.map(toTask);
   const now = new Date();
-  const next = nextPunch(tasks, now);
+  const next = nextPunch(tasks, now, midpoint);
   if (!expect || !sameNext(expect, next)) return reply({ error: "Trạng thái đã thay đổi, vui lòng xem lại.", next, tasks: shape(tasks) }, 409);
   if (next.action === "wait") {
     const last = tasks.reduce((x, t) => (t.job_id > x.job_id ? t : x));
@@ -185,7 +211,7 @@ export async function POST(req: NextRequest) {
   if (!live) return reply({ reason: "no_position", error: TURN_ON_APP, next }, 409);
   const me = live.find((d) => d.deliveryDriverId === driverId);
   const pos = positionOf(me, now);
-  if (!pos.ok) return reply({ reason: pos.reason, error: TURN_ON_APP, position_age_s: pos.age_s ?? null, next }, 409);
+  if (!pos.ok) return reply({ reason: pos.reason, error: TURN_ON_APP, next }, 409);
 
   let candidates: Place[];
   if (next.action === "complete") {
@@ -204,7 +230,7 @@ export async function POST(req: NextRequest) {
   const verdict = pickPlace(pos.pos, candidates);
   if (!verdict.near) {
     const far = verdict.nearest ? ` Bạn đang cách ${verdict.nearest.name} khoảng ${verdict.distance_m}m.` : "";
-    return reply({ reason: "far", error: TURN_ON_APP + far, nearest: verdict.nearest?.name ?? null, distance_m: verdict.distance_m, position_age_s: pos.age_s, next }, 409);
+    return reply({ reason: "far", error: REFRESH_IN_APP + far, nearest: verdict.nearest?.name ?? null, distance_m: verdict.distance_m, position_age_s: pos.age_s, next }, 409);
   }
 
   let jobId: number;

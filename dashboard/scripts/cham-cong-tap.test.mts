@@ -1,12 +1,12 @@
 /**
- * One-tap chấm công's pure rules: is the Cartrack position fresh, which allowed place
- * is the driver at, and what does the one button do next.
+ * One-tap chấm công's pure rules: reading Cartrack's last known position, which
+ * allowed place the driver is at, and what the one button does next.
  *
  *   npx tsx scripts/cham-cong-tap.test.mts
  */
 import assert from "node:assert/strict";
 import { positionOf, pickPlace, parseLiveTs, CHAM_CONG_RADIUS_M, type Place } from "../src/lib/cham-cong-geo";
-import { nextPunch, sameNext, type PunchTask } from "../src/lib/cham-cong-state";
+import { nextPunch, sameNext, shiftMidpoint, type PunchTask } from "../src/lib/cham-cong-state";
 
 const NOW = new Date("2026-11-03T07:20:00+07:00");
 const live = (positionUpdatedTs: string | null, latitude: number | null = 10.77846, longitude: number | null = 106.67974) =>
@@ -23,13 +23,12 @@ assert.ok(Number.isNaN(parseLiveTs("hôm qua")) && Number.isNaN(parseLiveTs(null
 assert.deepEqual(positionOf(undefined, NOW), { ok: false, reason: "no_position" });
 assert.deepEqual(positionOf(live("2026-11-03 07:19:00", 0, 0), NOW), { ok: false, reason: "no_position" });
 assert.deepEqual(positionOf(live("2026-11-03 07:19:00", null, null), NOW), { ok: false, reason: "no_position" });
-assert.deepEqual(positionOf(live(null), NOW), { ok: false, reason: "stale" }, "no timestamp is stale");
-assert.deepEqual(positionOf(live("hôm qua"), NOW), { ok: false, reason: "stale" }, "unparseable is stale, never fresh");
-assert.deepEqual(positionOf(live("2026-11-03 07:14:59"), NOW), { ok: false, reason: "stale", age_s: 301 });
-const fresh = positionOf(live("2026-11-03 07:15:00"), NOW);
 const real = positionOf(live("2026-11-03 07:18:20.704844+07"), NOW);
-assert.ok(real.ok && real.age_s === 99, "the format Cartrack actually sends is fresh");
-assert.ok(fresh.ok && fresh.age_s === 300, "exactly 5 min is still fresh");
+assert.ok(real.ok && real.age_s === 99, "the format Cartrack actually sends");
+const old = positionOf(live("2026-11-03 05:00:00.000000+07"), NOW);
+assert.ok(old.ok && old.age_s === 8400, "the last known fix is used whatever its age");
+const noTime = positionOf(live(null), NOW);
+assert.ok(noTime.ok && noTime.age_s === null, "no timestamp still uses the fix");
 
 // ── place ──
 const D000: Place = { customer_id: "a", name: "D000", lat: 10.77846, lon: 106.67974, why: "branch" };
@@ -52,11 +51,33 @@ assert.equal(wait.action, "wait");
 assert.ok(wait.action === "wait" && wait.type === "check-out" && Date.parse(wait.until) === Date.parse("2026-11-03T07:27:00+07:00"));
 assert.deepEqual(nextPunch([t(1, "check-in", true, "2026-11-03 07:09:00")], NOW), { action: "create", type: "check-out" });
 assert.deepEqual(nextPunch([t(1, "check-in", true, "2026-11-03 07:10:00")], NOW), { action: "create", type: "check-out" }, "exactly 10:00 is allowed");
-assert.deepEqual(nextPunch([
-  t(4, "check-out", true, "2026-11-03 07:00:00"), t(1, "check-in", true, "2026-11-03 05:00:00"),
-  t(3, "check-in", true, "2026-11-03 06:30:00"), t(2, "check-out", true, "2026-11-03 06:00:00"),
-], NOW), { action: "create", type: "check-in" }, "latest by job id, whatever the order");
+assert.deepEqual(nextPunch([t(1, "check-in", true, "2026-11-03 06:00:00"), t(2, "check-out", true, "2026-11-03 07:00:00")], NOW),
+  { action: "create", type: "check-out" }, "after the first tap, every tap is a check-out — the last one counts");
+assert.deepEqual(nextPunch([t(2, "check-out", true, "2026-11-03 07:00:00"), t(1, "check-in", true, "2026-11-03 06:00:00")], NOW),
+  { action: "create", type: "check-out" }, "order of the list does not matter");
+const again = nextPunch([t(1, "check-in", true, "2026-11-03 06:00:00"), t(2, "check-out", true, "2026-11-03 07:15:00")], NOW);
+assert.ok(again.action === "wait" && again.type === "check-out", "the 10-minute gap holds between check-outs too");
+assert.deepEqual(nextPunch([t(1, "check-out", true, "2026-11-03 06:00:00")], NOW),
+  { action: "create", type: "check-in" }, "a day with only a check-out (made by điều phối) still gets its check-in");
 assert.deepEqual(nextPunch([t(1, "check-in", true, "?")], NOW), { action: "create", type: "check-out" }, "an unreadable time does not block");
+
+// ── first tap after the middle of today's shift is a check-out ──
+const D = "2026-11-03";
+const at = (hhmm: string) => new Date(`${D}T${hhmm}:00+07:00`);
+const hoaMid = shiftMidpoint([{ start: "07:00", end: "15:00" }], D);
+assert.equal(hoaMid, Date.parse(`${D}T11:00:00+07:00`));
+const tuMid = shiftMidpoint([{ start: "15:00", end: "21:30" }, { start: "06:00", end: "15:00" }], D);
+assert.equal(tuMid, Date.parse(`${D}T13:45:00+07:00`), "Anh Tú: BO 06:00 to driving 21:30");
+assert.equal(shiftMidpoint([], D), null);
+assert.equal(shiftMidpoint([{ start: "15:00", end: "15:00" }], D), null);
+assert.deepEqual(nextPunch([], at("06:55"), hoaMid), { action: "create", type: "check-in" }, "before the middle: check-in");
+assert.deepEqual(nextPunch([], at("15:05"), hoaMid), { action: "create", type: "check-out" }, "forgot to tap in: the lone tap is the check-out");
+assert.deepEqual(nextPunch([], at("11:00"), hoaMid), { action: "create", type: "check-out" }, "exactly the middle counts as after");
+assert.deepEqual(nextPunch([t(1, "check-out", true, `${D} 15:05:00`)], at("16:00"), hoaMid),
+  { action: "create", type: "check-out" }, "after a midpoint check-out, still check-out — the last one counts");
+assert.deepEqual(nextPunch([t(1, "check-in", true, `${D} 06:00:00`)], at("09:00"), tuMid), { action: "create", type: "check-out" });
+assert.deepEqual(nextPunch([], at("15:05"), null), { action: "create", type: "check-in" }, "no shift: first tap in, then out");
+assert.deepEqual(nextPunch([t(1, "check-in", true, `${D} 15:05:00`)], at("15:20"), null), { action: "create", type: "check-out" });
 
 assert.ok(sameNext({ action: "create", type: "check-in" }, { action: "create", type: "check-in" }));
 assert.ok(!sameNext({ action: "create", type: "check-in" }, { action: "create", type: "check-out" }));

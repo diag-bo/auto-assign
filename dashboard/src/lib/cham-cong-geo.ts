@@ -15,15 +15,11 @@ import { haversineKm } from "./distance";
 /** How close counts as "at the place". */
 export const CHAM_CONG_RADIUS_M = 200;
 
-/** A position older than this says where the driver WAS. The Cartrack app reports
- *  while it is open; a backgrounded app goes quiet and its last fix goes stale. */
-export const POSITION_MAX_AGE_MIN = 5;
-
 export interface LatLng { lat: number; lon: number }
 
 export type PositionVerdict =
-  | { ok: true; pos: LatLng; age_s: number }
-  | { ok: false; reason: "no_position" | "stale"; age_s?: number };
+  | { ok: true; pos: LatLng; age_s: number | null }
+  | { ok: false; reason: "no_position" };
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
@@ -39,17 +35,16 @@ export function parseLiveTs(ts: string | null | undefined): number {
   return Date.parse(`${m[1]}T${m[2]}.${ms}${off}`);
 }
 
-/** The driver's live Cartrack position, if it is fresh enough to judge a tap by.
- *  Freshness is positionUpdatedTs — when the fix was taken — not lastOnlineTs,
- *  which only says the app was talking. (0, 0) is a failed fix, not a place in
- *  Vietnam. An unreadable time is stale, never fresh. */
+/** The driver's LAST KNOWN Cartrack position, whatever its age (supervisor,
+ *  2026-11-03): the app sends a new fix only now and then — one test phone sat on
+ *  the same fix for 4+ minutes with the app open — so an age limit refused drivers
+ *  standing at the branch. The age (from positionUpdatedTs, when the fix was taken)
+ *  is reported, never enforced. (0, 0) is a failed fix, not a place in Vietnam. */
 export function positionOf(live: LiveDriver | undefined, now: Date): PositionVerdict {
   const lat = live?.latitude, lon = live?.longitude;
   if (!finite(lat) || !finite(lon) || (lat === 0 && lon === 0)) return { ok: false, reason: "no_position" };
   const at = parseLiveTs(live?.positionUpdatedTs);
-  if (!Number.isFinite(at)) return { ok: false, reason: "stale" };
-  const age_s = Math.max(0, Math.round((now.getTime() - at) / 1000));
-  if (age_s > POSITION_MAX_AGE_MIN * 60) return { ok: false, reason: "stale", age_s };
+  const age_s = Number.isFinite(at) ? Math.max(0, Math.round((now.getTime() - at) / 1000)) : null;
   return { ok: true, pos: { lat, lon }, age_s };
 }
 

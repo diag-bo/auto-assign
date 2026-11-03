@@ -48,6 +48,7 @@ const STEPS: [string, string][] = [
   ["config", "  · Config"],
   ["route", "  · Chuyến hôm nay"],
   ["coords", "  · Toạ độ điểm"],
+  ["shift", "· Ca hôm nay"],
   ["task_coords", "Toạ độ task đang mở"],
   ["lock", "Khoá chống bấm 2 lần"],
   ["create", "Tạo task"],
