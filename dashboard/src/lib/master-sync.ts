@@ -214,7 +214,7 @@ export type LabcenterMetadataReport = { matched: number; owners: number; errors:
  * `deadline` stops it starting new codes (it returns a cursor to carry on from).
  */
 export async function syncLabcenterMetadata(offset = 0, limit = 200, onlyCodes?: string[], after?: string,
-  opts: { include?: (code: string) => boolean; parallel?: number; deadline?: number } = {}): Promise<LabcenterMetadataReport> {
+  opts: { include?: (code: string) => boolean; parallel?: number; deadline?: number; pauseMs?: number } = {}): Promise<LabcenterMetadataReport> {
   const [admin, receptionist] = await Promise.all([getAdminToken(), getReceptionistToken()]);
   if (!admin || !receptionist) throw new Error("Labcenter credentials unavailable");
   const [clients, pickDrops] = await Promise.all([
@@ -250,6 +250,7 @@ export async function syncLabcenterMetadata(offset = 0, limit = 200, onlyCodes?:
   for (let i = 0; i < codes.length; i += parallel) {
     // Never on the first group, so every call moves the cursor.
     if (i > 0 && opts.deadline && Date.now() > opts.deadline) { done = i; break; }
+    if (i > 0 && opts.pauseMs) await new Promise(r => setTimeout(r, opts.pauseMs));
     await Promise.all(codes.slice(i, i + parallel).map(async (code) => {
       const group = byCode.get(code)!;
       try {

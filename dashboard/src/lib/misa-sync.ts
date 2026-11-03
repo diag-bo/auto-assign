@@ -12,10 +12,6 @@ import { MAX_SELF_CALLS, MORNING_RUN_KEY, MORNING_RUN_LOCK, postContinuation } f
 const KEY=MORNING_RUN_KEY, LOCK=MORNING_RUN_LOCK, TTL=7*86400, COOLDOWN=15;
 // Room inside maxDuration 300 for the Labcenter check to stop starting new codes.
 const STEP_BUDGET_MS=240_000;
-/** Which seventh of the client codes a day checks. By code, not position, so a new client never shifts the others. */
-export function inLabcenterShare(code:string,day:string) {
-  return Number(code.slice(-9))%7===Math.floor(Date.parse(day)/86400000)%7;
-}
 type Run={id:number,status:"queued"|"in_progress"|"completed",conclusion:"success"|"failure"|null,
   created_at:string,updated_at:string,daily:boolean,phase:"profiles"|"metadata"|"misa"|"cache",
   cursor:string,months:string[],monthIndex:number,processed:number,issues:number,shiftRows:number,error?:string};
@@ -93,15 +89,16 @@ export async function runMisaSyncStep(id:number,hop=MAX_SELF_CALLS) {
     if(run.phase==="profiles") {
       await syncCartrackProfiles();invalidateDriversCache();await invalidateConfigCache();run.phase="misa";
     }else if(run.phase==="metadata") {
-      // Go easy on Labcenter: a seventh of the ~1,600 client codes a morning, so each client
-      // is checked once a week (~230 codes, ~500 requests), 2 at a time, pick-drop list
-      // fetched once. It was every code daily, 4 at a time, the list re-fetched per 40.
-      // The list, not just its count, so the dashboard can show what the morning found:
-      // today's share replaces its own findings from a week ago, the other six days' stay.
-      if(!run.cursor)await sbDelete("master_sync_issues",`created_at=lt.${new Date(Date.now()-6*86400000).toISOString()}`);
-      const day=vnDate(new Date(run.created_at));
+      // Every client code each morning (~1,600, ~0.35 s each), 10 at a time with a 0.3 s
+      // pause between groups: ~2 min, one step. It was a seventh a day,
+      // which left a fixed finding on the dashboard for up to a week.
+      // Each step's findings REPLACE the previous run's for the codes it covered, so a
+      // fixed client drops off as soon as it is re-checked; the last step clears whatever
+      // older rows remain (clients since removed). A run that dies midway leaves the rest.
       const report=await syncLabcenterMetadata(0,Number.MAX_SAFE_INTEGER,undefined,run.cursor,
-        {include:code=>inLabcenterShare(code,day),parallel:2,deadline:started+STEP_BUDGET_MS});
+        {parallel:10,pauseMs:300,deadline:started+STEP_BUDGET_MS});
+      const covered=report.nextCursor?`${run.cursor?`&client_code=gt.${run.cursor}`:""}&client_code=lte.${report.nextCursor}`:"";
+      await sbDelete("master_sync_issues",`run_id=neq.${run.id}${covered}`);
       if(report.issues.length)await sbInsert("master_sync_issues",report.issues.map(i=>({...i,run_id:run!.id})));
       run.processed+=report.processed;run.issues+=report.issues.length;
       if(report.nextCursor) {
