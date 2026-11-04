@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { BASE_URL, getHeaders, getCustomerById } from "@/lib/cartrack";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
-import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, defaultDropoff, deliverTodo, isNear, isSmartClient, loadBooked, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
+import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, defaultDropoff, deliverTodo, isNear, isSmartClient, loadBooked, parkCollect, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
 import { loadConfig } from "@/lib/config";
 import { loadLeaveEntries } from "@/lib/leave-config";
 import { shortCode } from "@/lib/psc-dup";
@@ -259,14 +259,15 @@ export async function POST(req: NextRequest) {
         const entry: KqvtEntry = {
           ...base, job_id: res.jobId, collector: res.driverId ?? undefined, collector_name: res.driverId ? who?.name ?? undefined : undefined,
           ...(near ? { direct: true } : {}),
-          // Smart client, nobody given: the cycle hands it to the driver of the client's
-          // pickup once they are at the PSC (lib/kqvt.ts smartCollector).
+          // Smart client, nobody given: parked on the proxy until the cycle hands it to the
+          // driver of the client's pickup once they are at the PSC (lib/kqvt.ts).
           ...(!near && !res.driverId && plan.autoAssign && config && isSmartClient(config, d.customer_id) ? { smart: true } : {}),
         };
         await savePending(entry);
         pending.push(entry);
+        if (entry.smart) await parkCollect(res.jobId, "prod").catch(() => null);
         await record();
-        await pushRunLog([{ ts: vnTimestamp(), level: "INFO", msg: `Job ${res.jobId} - ${near ? "giao trực tiếp" : "lấy"} ${item.text}${near ? "" : " tại PSC"}: ${res.driverId ? who?.name ?? "tài xế" : "chờ điều phối"} | ${psc} → ${client}` }]).catch(() => {});
+        await pushRunLog([{ ts: vnTimestamp(), level: "INFO", msg: `Job ${res.jobId} - ${near ? "giao trực tiếp" : "lấy"} ${item.text}${near ? "" : " tại PSC"}: ${res.driverId ? who?.name ?? "tài xế" : entry.smart ? "đỗ chờ tài xế lấy mẫu tại khách" : "chờ điều phối"} | ${psc} → ${client}` }]).catch(() => {});
       }
     } catch (e) {
       console.error("[psc-delivery] error:", e);

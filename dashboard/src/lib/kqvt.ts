@@ -38,7 +38,7 @@
  * one — verified on throwaway prod jobs 2026-10-18. Only a stop still "Chờ lấy" is ever
  * touched, so no photo a driver already took is at stake.
  */
-import { BASE_URL, assignJob, cancelJob, createJob, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
+import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, parkOnProxy, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
 import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
 import { roadDistancesFromPoint } from "./distance-cache";
@@ -48,7 +48,7 @@ import { PSC_ROUTES } from "./psc-routes-data";
 import { shortCode } from "./psc-dup";
 import { returnRideable, shiftMappingsForPsc, subToCoveredDriver } from "./return-trips";
 import { sbSelect } from "./supabase-rest";
-import { parseVnTimestamp, vnHoursMinutes, vnTimestamp } from "./time";
+import { parseVnTimestamp, vnDate, vnHoursMinutes, vnTimestamp } from "./time";
 import type { Config, FailedJob, Job, LogLevel } from "./types";
 import type { LeaveEntry } from "./leave-config";
 
@@ -79,8 +79,9 @@ export interface KqvtEntry {
   origin?: string; at?: string; hops?: string[]; leg_job?: number; leg_checked_ms?: number;
   /** A direct PSC → client job (NEAR_KM): no collect/hand-over halves. */
   direct?: boolean;
-  /** A smart client's collect job, made unassigned: the cycle gives it to the driver of
-   *  the client's sample pickup once they are at the PSC (smartCollector). */
+  /** A smart client's collect job, PARKED on the proxy driver (parkCollect): the cycle
+   *  gives it to the driver of the client's sample pickup once they are at the PSC
+   *  (smartCollector). */
   smart?: boolean;
 }
 
@@ -525,6 +526,11 @@ export function smartCollector(e: KqvtEntry, jobs: Job[], now: number): { driver
   return null;
 }
 
+/** Park a smart client's collect job on the proxy driver until tonight, so it is not in
+ *  the dispatcher's unassigned pool while it waits for smartCollector. The release time
+ *  is set because the proxy release frees any parked job whose time is blank or past. */
+export const parkCollect = (jobId: number, env: Env) => parkOnProxy(jobId, `${vnDate()} 23:59:00`, env);
+
 /** A client the config serves with a smart pool (two or more candidates). */
 export const isSmartClient = (config: Config, clientId: string) =>
   config.mappings.some((m) => m.customer_id === clientId && m.smart_driver_id.length >= 2);
@@ -612,6 +618,7 @@ export async function kqvtCycle(
       smart: (!res.driverId && isSmartClient(config, e.client_id)) || undefined });
     await savePending(e);
     await dropPending(waitKey);
+    if (e.smart) await parkCollect(e.job_id, env).catch(() => null);
     log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${res.driverId ? who?.name ?? "tài xế" : "chờ điều phối"} | ${e.psc_name} → ${e.client_name}`, "OK");
   };
 
@@ -663,9 +670,11 @@ export async function kqvtCycle(
       }
       const verdict = e.direct ? "wait" : collectVerdict(collect);
       if (verdict === "drop") { await dropPending(e.job_id); await closeItems(e, { state: "huy", job: e.job_id }); continue; }
-      // A smart client's collect job, still nobody's: give it to the driver of the
-      // client's pickup once they are at the PSC. Left alone once anyone holds it.
-      if (verdict === "wait" && e.smart && collect && collect !== "gone" && !collect.delivery_driver_id) {
+      // A smart client's collect job, parked (or nobody's — released overnight, rolled
+      // over): give it to the driver of the client's pickup once they are at the PSC,
+      // else park it again. Left alone once a real driver holds it.
+      const parked = collect && collect !== "gone" ? collect.delivery_driver_id === PROXY_DRIVER_ID : false;
+      if (verdict === "wait" && e.smart && collect && collect !== "gone" && (parked || !collect.delivery_driver_id)) {
         const who = smartCollector(e, jobsToday, now);
         const res = who ? await assignJob(who.driverId, e.job_id, env).catch(() => null) : null;
         if (who && res && res.status >= 200 && res.status < 300) {
@@ -673,6 +682,8 @@ export async function kqvtCycle(
           e.collector_name = who.name;
           await savePending(e);
           log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${who.name ?? "tài xế"} (đang ở PSC, có chuyến lấy mẫu tại khách) | ${e.psc_name} → ${e.client_name}`, "OK");
+        } else if (!parked) {
+          await parkCollect(e.job_id, env).catch(() => null);
         }
       }
       if (verdict === "collected" && collect && collect !== "gone") {
