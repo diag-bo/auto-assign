@@ -9,7 +9,7 @@
  * Công tab, minus the timing panel.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Type = "check-in" | "check-out";
 type Next =
@@ -18,17 +18,33 @@ type Next =
   | { action: "wait"; type: Type; until: string };
 interface Task { job_id: number; type: Type; done: boolean; time: string | null; place: string | null }
 interface State { driver_name: string; next: Next; tasks: Task[]; timings: Record<string, number> }
-interface Tap { at: string; label: string; status: number; roundTrip: number; timings: Record<string, number>; message: string; detail: string }
+interface Tap { at: string; label: string; status: number; gps: number; roundTrip: number; timings: Record<string, number>; message: string; detail: string }
+interface Fix { lat: number; lon: number; accuracy_m: number }
 
-/** Why the server said what it said, for the pilot: refusal reason, position age, distance. */
-function detailOf(d: { reason?: string; position_age_s?: number | null; distance_m?: number | null; place?: string } | null): string {
+/** Why the server said what it said, for the pilot: refusal reason, distances, Cartrack's view. */
+function detailOf(d: { reason?: string; accuracy_m?: number; cartrack_m?: number | null; position_age_s?: number | null; distance_m?: number | null; place?: string } | null): string {
   if (!d) return "";
   return [
     d.reason,
-    d.position_age_s != null ? `vị trí ${d.position_age_s}s trước` : null,
     d.distance_m != null ? `${d.distance_m}m${d.place ? ` tới ${d.place}` : ""}` : null,
+    d.accuracy_m != null ? `GPS ±${d.accuracy_m}m` : null,
+    d.cartrack_m != null ? `Cartrack lệch ${d.cartrack_m}m (vị trí ${d.position_age_s}s trước)` : "Cartrack: không đối chiếu",
   ].filter(Boolean).join(" · ");
 }
+
+// A fix the page already holds is used if it is this recent; otherwise the tap waits
+// for a new one. The server never trusts the page's clock — this is only so the
+// driver does not wait for GPS on every tap.
+const FIX_FRESH_MS = 20_000;
+const GPS = { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 };
+
+function freshFix(): Promise<Fix> {
+  return new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(
+    (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy_m: p.coords.accuracy }), reject, GPS));
+}
+
+const GPS_DENIED = "Trang chưa được phép dùng vị trí. Vui lòng cho phép vị trí trong cài đặt trình duyệt, rồi thử lại.";
+const GPS_FAILED = "Chưa lấy được vị trí điện thoại, vui lòng bật định vị rồi thử lại.";
 
 const word = (t: Type) => (t === "check-in" ? "vào ca" : "ra ca");
 const hm = (iso: string) => new Date(iso).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
@@ -63,6 +79,7 @@ function Timings({ tap }: { tap: Tap }) {
   return (
     <table className="w-full text-sm">
       <tbody>
+        <tr><td className="py-0.5 text-gray-600">Lấy vị trí điện thoại</td><td className="py-0.5 text-right tabular-nums">{tap.gps} ms</td></tr>
         {rows.map(([k, name]) => (
           <tr key={k} className={k === "total" ? "font-semibold border-t" : ""}>
             <td className="py-0.5 whitespace-pre text-gray-600">{name}</td>
@@ -74,7 +91,7 @@ function Timings({ tap }: { tap: Tap }) {
         )}
         <tr className="font-bold border-t">
           <td className="py-1">Tài xế chờ</td>
-          <td className="py-1 text-right tabular-nums">{(tap.roundTrip / 1000).toFixed(2)} s</td>
+          <td className="py-1 text-right tabular-nums">{((tap.gps + tap.roundTrip) / 1000).toFixed(2)} s</td>
         </tr>
       </tbody>
     </table>
@@ -121,6 +138,8 @@ export default function ChamCongTapPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [taps, setTaps] = useState<Tap[]>([]);
+  const [gpsNote, setGpsNote] = useState<string | null>(null);
+  const latest = useRef<{ fix: Fix; at: number } | null>(null);
 
   const apply = useCallback(({ status, ok, data }: { status: number; ok: boolean; data: State & { error?: string } | null }) => {
     if (status === 401) return setView("login");
@@ -132,18 +151,42 @@ export default function ChamCongTapPage() {
 
   useEffect(() => { fetchState().then(apply); }, [apply]);
 
+  // Keep a fix warm while the page is open, so a tap rarely waits for GPS.
+  useEffect(() => {
+    if (view !== "ready" || !navigator.geolocation) return;
+    const id = navigator.geolocation.watchPosition(
+      (p) => {
+        latest.current = { fix: { lat: p.coords.latitude, lon: p.coords.longitude, accuracy_m: p.coords.accuracy }, at: Date.now() };
+        setGpsNote(`Định vị điện thoại: ±${Math.round(p.coords.accuracy)}m`);
+      },
+      (e) => setGpsNote(e.code === e.PERMISSION_DENIED ? GPS_DENIED : GPS_FAILED),
+      GPS,
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [view]);
+
   async function tap() {
     if (!state || busy || state.next.action === "wait") return;
     setBusy(true); setNotice(null);
+    const g = performance.now();
+    let fix: Fix;
+    try {
+      const held = latest.current;
+      fix = held && Date.now() - held.at < FIX_FRESH_MS ? held.fix : await freshFix();
+    } catch (e) {
+      setBusy(false);
+      return setNotice({ ok: false, text: (e as GeolocationPositionError)?.code === 1 ? GPS_DENIED : GPS_FAILED });
+    }
+    const gps = Math.round(performance.now() - g);
     const t = performance.now();
     const res = await fetch("/api/cham-cong/tap", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expect: state.next }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expect: state.next, fix }),
     }).catch(() => null);
     const data = await res?.json().catch(() => null);
     const roundTrip = Math.round(performance.now() - t);
     if (res?.status === 401) { setBusy(false); return setView("login"); }
     const text: string = data?.message ?? data?.error ?? "Không kết nối được, vui lòng thử lại.";
-    setTaps((list) => [{ at: new Date().toISOString(), label: label(state.next), status: res?.status ?? 0, roundTrip, timings: data?.timings ?? {}, message: text, detail: detailOf(data) }, ...list].slice(0, 10));
+    setTaps((list) => [{ at: new Date().toISOString(), label: label(state.next), status: res?.status ?? 0, gps, roundTrip, timings: data?.timings ?? {}, message: text, detail: detailOf(data) }, ...list].slice(0, 10));
     setNotice({ ok: !!data?.ok && data?.completed !== false, text });
     if (data?.ok) {
       // Hold the confirmation in place of the button, so a second tap hits nothing.
@@ -197,6 +240,7 @@ export default function ChamCongTapPage() {
                 {busy ? "Đang xử lý…" : label(state.next)}
               </button>
             )}
+            {gpsNote && <p className="text-xs text-gray-500">{gpsNote}</p>}
             {notice && !notice.ok && (
               <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-700 space-y-2">
                 <p>{notice.text}</p>
@@ -231,7 +275,7 @@ export default function ChamCongTapPage() {
                     {taps.slice(1).map((t) => (
                       <li key={t.at} className="flex justify-between">
                         <span>{hm(t.at)} · {t.label} · {t.status}</span>
-                        <span className="tabular-nums">{(t.roundTrip / 1000).toFixed(2)} s</span>
+                        <span className="tabular-nums">{((t.gps + t.roundTrip) / 1000).toFixed(2)} s</span>
                       </li>
                     ))}
                   </ul>

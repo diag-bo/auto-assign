@@ -4,9 +4,9 @@ import { haversineKm } from "./distance";
 /**
  * One-tap chấm công: is the driver standing at a place they may punch at?
  *
- * The position is the one the CARTRACK APP reports (delivery_drivers_list), read on
- * the server at the moment of the tap — never the browser's. Nothing about it is
- * stored or logged; only the verdict and a rounded distance go back to the page.
+ * The position is the PHONE'S, read by the page at the tap (browserFix), checked on
+ * the server against the CARTRACK APP's last fix (delivery_drivers_list). Nothing about
+ * either is stored or logged; only the verdict and rounded distances go back to the page.
  *
  * Straight-line distance, deliberately: a 200 m radius needs no road router, and the
  * road providers are the billed, daily-capped ones (CLAUDE.md footgun 12).
@@ -46,6 +46,35 @@ export function positionOf(live: LiveDriver | undefined, now: Date): PositionVer
   const at = parseLiveTs(live?.positionUpdatedTs);
   const age_s = Number.isFinite(at) ? Math.max(0, Math.round((now.getTime() - at) / 1000)) : null;
   return { ok: true, pos: { lat, lon }, age_s };
+}
+
+/** The phone's own position, sent by the page with the tap (navigator.geolocation).
+ *  FRESH — read at the tap — which Cartrack's is not: with the app closed, Cartrack
+ *  keeps its last fix forever, and a test check-in passed 15 km from the branch
+ *  (2026-11-04). But it is numbers the page sends, so it is cross-checked against
+ *  Cartrack (agreesWithCartrack). Null when the body carries nothing usable. */
+export interface BrowserFix extends LatLng { accuracy_m: number }
+
+export function browserFix(v: unknown): BrowserFix | null {
+  const f = v as { lat?: unknown; lon?: unknown; accuracy_m?: unknown } | null;
+  if (!f || !finite(f.lat) || !finite(f.lon) || !finite(f.accuracy_m) || f.accuracy_m < 0) return null;
+  if (Math.abs(f.lat) > 90 || Math.abs(f.lon) > 180 || (f.lat === 0 && f.lon === 0)) return null;
+  return { lat: f.lat, lon: f.lon, accuracy_m: f.accuracy_m };
+}
+
+// Nobody covers ground faster than this between Cartrack's fix and the tap
+// (54 km/h, in town), plus slack for two GPS readings of one spot.
+const MAX_SPEED_M_S = 15;
+const AGREE_SLACK_M = 500;
+
+/** Could the phone have got from Cartrack's last fix to where the browser says it is?
+ *  A recent Cartrack fix far from the browser's means the browser's numbers are not
+ *  the phone's — refused. An old fix, or none, cannot say: allowed (the hole left is a
+ *  faked browser position with the Cartrack app kept closed). */
+export function agreesWithCartrack(fix: LatLng, cartrack: PositionVerdict): { ok: boolean; distance_m: number | null } {
+  if (!cartrack.ok || cartrack.age_s === null) return { ok: true, distance_m: null };
+  const distance_m = Math.round(haversineKm(fix.lat, fix.lon, cartrack.pos.lat, cartrack.pos.lon) * 1000);
+  return { ok: distance_m <= AGREE_SLACK_M + cartrack.age_s * MAX_SPEED_M_S, distance_m };
 }
 
 export interface Place {

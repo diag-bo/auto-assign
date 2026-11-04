@@ -7,7 +7,7 @@ import { NV_COOKIE, verifySession } from "@/lib/driver-session";
 import { CHAM_CONG_PREFIX } from "@/lib/job-filters";
 import { acquireCreateLock, releaseCreateLock, getChamCongIds, setChamCongIds, addChamCongId } from "@/lib/smart-log-kv";
 import { vnDate, parseVnTimestamp } from "@/lib/time";
-import { pickPlace, placeCoords, positionOf, type Place } from "@/lib/cham-cong-geo";
+import { agreesWithCartrack, browserFix, CHAM_CONG_RADIUS_M, pickPlace, placeCoords, positionOf, type Place } from "@/lib/cham-cong-geo";
 import { nextPunch, sameNext, shiftMidpoint, type NextPunch, type PunchTask } from "@/lib/cham-cong-state";
 import { sbSelect } from "@/lib/supabase-rest";
 import { staffCode } from "@/lib/display-names";
@@ -17,8 +17,9 @@ import { BO_RUNNERS } from "@/lib/pay";
  * /api/cham-cong/tap — one-button chấm công (PILOT, /cham-cong/tap).
  *
  * The driver comes from the Nhận Việc session only. The server decides the punch
- * (nextPunch), the place (the nearest allowed one within 200 m of the Cartrack app's
- * last known position) and completes the task on the spot. The first tap of the day
+ * (nextPunch), the place (the nearest allowed one within 200 m of the PHONE's position,
+ * which the page reads at the tap and Cartrack's last fix must not contradict —
+ * agreesWithCartrack) and completes the task on the spot. The first tap of the day
  * is the check-in — or a check-out when it comes after the middle of today's shift —
  * and every later one a check-out; the last one counts. A tap away from every allowed place,
  * or with no position at all, is REFUSED: nothing is created.
@@ -169,7 +170,7 @@ export async function GET(req: NextRequest) {
 }
 
 // ── POST { expect } — do the next punch, here and now ─────────────────────
-const TURN_ON_APP = "Vui lòng bật app Cartrack để lấy đúng vị trí, rồi thử lại.";
+const NEED_LOCATION = "Chưa lấy được vị trí điện thoại. Vui lòng cho phép trang dùng vị trí, rồi thử lại.";
 // The app sends a fix only now and then; its refresh button sends one at once.
 const REFRESH_IN_APP = "Vui lòng bấm làm mới vị trí trong app Cartrack, rồi thử lại.";
 
@@ -186,7 +187,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...body, timings: ms }, { status });
   };
 
-  const { expect } = (await req.json().catch(() => ({}))) as { expect?: NextPunch };
+  const body = (await req.json().catch(() => ({}))) as { expect?: NextPunch; fix?: unknown };
+  const { expect } = body;
 
   // Everything the tap needs, read at once: the wait is the slowest of them, not the sum.
   const [jobs, live, places, midpoint] = await Promise.all([
@@ -208,10 +210,19 @@ export async function POST(req: NextRequest) {
     return reply({ error: `Bạn vừa ${last.type === "check-in" ? "vào ca" : "ra ca"} lúc ${hhmm(last.at)} — có thể ${next.type === "check-in" ? "vào ca" : "ra ca"} sau ${until}.`, next }, 409);
   }
 
-  if (!live) return reply({ reason: "no_position", error: TURN_ON_APP, next }, 409);
-  const me = live.find((d) => d.deliveryDriverId === driverId);
+  const fix = browserFix(body.fix);
+  if (!fix) return reply({ reason: "no_position", error: NEED_LOCATION, next }, 409);
+  if (fix.accuracy_m > CHAM_CONG_RADIUS_M) {
+    return reply({ reason: "inaccurate", error: `Vị trí điện thoại chưa chính xác (±${Math.round(fix.accuracy_m)}m). Vui lòng đợi vài giây rồi thử lại.`, accuracy_m: Math.round(fix.accuracy_m), next }, 409);
+  }
+  // Cartrack unreadable = nothing to cross-check against; the tap goes on the phone's position.
+  const me = live?.find((d) => d.deliveryDriverId === driverId);
   const pos = positionOf(me, now);
-  if (!pos.ok) return reply({ reason: pos.reason, error: TURN_ON_APP, next }, 409);
+  const cross = agreesWithCartrack(fix, pos);
+  const seen = { accuracy_m: Math.round(fix.accuracy_m), cartrack_m: cross.distance_m, position_age_s: pos.ok ? pos.age_s : null };
+  if (!cross.ok) {
+    return reply({ reason: "mismatch", error: `Vị trí điện thoại không khớp với app Cartrack. ${REFRESH_IN_APP}`, ...seen, next }, 409);
+  }
 
   let candidates: Place[];
   if (next.action === "complete") {
@@ -227,10 +238,10 @@ export async function POST(req: NextRequest) {
   if (candidates.length === 0) {
     return reply({ reason: "no_places", error: "Hôm nay bạn chưa có điểm chấm công nào (không có trong config, chưa có chuyến). Vui lòng liên hệ điều phối.", next }, 409);
   }
-  const verdict = pickPlace(pos.pos, candidates);
+  const verdict = pickPlace(fix, candidates);
   if (!verdict.near) {
     const far = verdict.nearest ? ` Bạn đang cách ${verdict.nearest.name} khoảng ${verdict.distance_m}m.` : "";
-    return reply({ reason: "far", error: REFRESH_IN_APP + far, nearest: verdict.nearest?.name ?? null, distance_m: verdict.distance_m, position_age_s: pos.age_s, next }, 409);
+    return reply({ reason: "far", error: `Bạn chưa ở điểm chấm công.${far}`, nearest: verdict.nearest?.name ?? null, distance_m: verdict.distance_m, ...seen, next }, 409);
   }
 
   let jobId: number;
@@ -280,7 +291,7 @@ export async function POST(req: NextRequest) {
     place: verdict.place.name,
     why: verdict.place.why,
     distance_m: verdict.distance_m,
-    position_age_s: pos.age_s,
+    ...seen,
     message: done.ok
       ? `Đã ${what} lúc ${at} tại ${verdict.place.name}`
       : `Đã tạo task ${what} tại ${verdict.place.name} nhưng chưa hoàn thành được — bấm lại, hoặc hoàn thành trên app Cartrack.`,

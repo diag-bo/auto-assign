@@ -5,7 +5,7 @@
  *   npx tsx scripts/cham-cong-tap.test.mts
  */
 import assert from "node:assert/strict";
-import { positionOf, pickPlace, parseLiveTs, CHAM_CONG_RADIUS_M, type Place } from "../src/lib/cham-cong-geo";
+import { positionOf, pickPlace, parseLiveTs, browserFix, agreesWithCartrack, CHAM_CONG_RADIUS_M, type Place } from "../src/lib/cham-cong-geo";
 import { nextPunch, sameNext, shiftMidpoint, type PunchTask } from "../src/lib/cham-cong-state";
 
 const NOW = new Date("2026-11-03T07:20:00+07:00");
@@ -41,6 +41,23 @@ const nearStop = pickPlace({ lat: 10.77905, lon: 106.67974 }, [D000, stop]);
 assert.ok(nearStop.near && nearStop.place.why === "first_stop");
 const away = pickPlace({ lat: 10.7600, lon: 106.6774 }, [D000, D001]);
 assert.ok(!away.near && away.nearest?.name === "D001" && away.distance_m! > CHAM_CONG_RADIUS_M, "too far reports the nearest");
+
+// ── the phone's position, and Cartrack's say on it ──
+assert.equal(browserFix(null), null);
+assert.equal(browserFix({ lat: "10.7", lon: 106.6, accuracy_m: 5 }), null, "numbers only");
+assert.equal(browserFix({ lat: 10.7, lon: 106.6 }), null, "no accuracy, no fix");
+assert.equal(browserFix({ lat: 0, lon: 0, accuracy_m: 5 }), null);
+assert.equal(browserFix({ lat: 91, lon: 106.6, accuracy_m: 5 }), null);
+assert.deepEqual(browserFix({ lat: 10.7, lon: 106.6, accuracy_m: 12, extra: 1 }), { lat: 10.7, lon: 106.6, accuracy_m: 12 });
+const atBranch = { lat: 10.77846, lon: 106.67974 };
+const km15 = { lat: 10.77846 + 15 / 111, lon: 106.67974 };
+const ct = (pos: { lat: number; lon: number }, age_s: number | null) => ({ ok: true as const, pos, age_s });
+assert.deepEqual(agreesWithCartrack(atBranch, { ok: false, reason: "no_position" }), { ok: true, distance_m: null }, "no Cartrack fix: nothing to contradict");
+assert.equal(agreesWithCartrack(atBranch, ct(km15, null)).ok, true, "a fix of unknown age cannot contradict");
+assert.equal(agreesWithCartrack(atBranch, ct(km15, 30)).ok, false, "faked: at the branch, Cartrack 15 km away 30 s ago");
+assert.equal(agreesWithCartrack(atBranch, ct(atBranch, 30)).ok, true);
+assert.equal(agreesWithCartrack(atBranch, ct(km15, 4 * 3600)).ok, true, "app closed for hours: Cartrack cannot say");
+assert.equal(agreesWithCartrack(atBranch, ct({ lat: 10.77846 + 2 / 111, lon: 106.67974 }, 180)).ok, true, "drove 2 km in the 3 min since the fix");
 
 // ── next punch ──
 const t = (job_id: number, type: PunchTask["type"], done: boolean, at: string): PunchTask => ({ job_id, type, done, at });
