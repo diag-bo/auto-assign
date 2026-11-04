@@ -260,8 +260,9 @@ export async function POST(req: NextRequest) {
           ...base, job_id: res.jobId, collector: res.driverId ?? undefined, collector_name: res.driverId ? who?.name ?? undefined : undefined,
           ...(near ? { direct: true } : {}),
           // Smart client, nobody given: parked on the proxy until the cycle hands it to the
-          // driver of the client's pickup once they are at the PSC (lib/kqvt.ts).
-          ...(!near && !res.driverId && plan.autoAssign && config && isSmartClient(config, d.customer_id) ? { smart: true } : {}),
+          // driver of the client's pickup once they are at the PSC (lib/kqvt.ts). D001
+          // clients too (supervisor, 2026-11-04), though D001 assigns nobody at booking.
+          ...(!near && !res.driverId && config && isSmartClient(config, d.customer_id) ? { smart: true } : {}),
         };
         await savePending(entry);
         pending.push(entry);

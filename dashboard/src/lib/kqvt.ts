@@ -4,8 +4,9 @@
  *   1. COLLECT — a ONE-STOP job at the PSC, one per (PSC, client), carrying a photo
  *      to-do per booking. A later booking for the same client is APPENDED to it while
  *      the driver has not set off (stop still "Chờ lấy"); after that a new one is made.
- *      Given at booking to the client's driver: the fixed one, or for a smart client
- *      the on-duty candidate nearest the PSC.
+ *      Given at booking to the client's fixed driver. A smart client's (D001 included)
+ *      is parked on the proxy and given to the driver of the client's sample pickup
+ *      once they are at the PSC (smartCollector, 2026-11-04).
  *   2. HAND OVER — once that stop is done the driver HOLDS the items. The next sample
  *      pickup at the client that is theirs and not yet started gets a photo to-do
  *      "Giao KQ/VT …". For a smart client the engine puts that pickup on the holder
