@@ -45,7 +45,7 @@ import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
 import { roadDistancesFromPoint } from "./distance-cache";
 import { resolveDriverChoices, resolveFixedDriver } from "./fixed-driver";
-import { LAB_CUSTOMER_ID, PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "./job-filters";
+import { LAB_CUSTOMER_ID, LAB_WATCHED_CLIENTS, PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "./job-filters";
 import { PSC_ROUTES } from "./psc-routes-data";
 import { shortCode } from "./psc-dup";
 import { returnRideable, shiftMappingsForPsc, subToCoveredDriver } from "./return-trips";
@@ -145,9 +145,14 @@ export async function defaultDropoff(clientId: string): Promise<string | null> {
 }
 
 /** The clients a PSC may book for: those whose default drop-off is that PSC — none on
- *  the master list means D001 (supervisor, 2026-11-03). Throws when the list is unreadable. */
+ *  the master list means D001 (supervisor, 2026-11-03). D001 also books every location
+ *  of the accounts its /qr page follows (LAB_WATCHED_CLIENTS, 2026-11-04); one dropping
+ *  elsewhere goes multi-leg, riding the return trips to its drop-off (planDelivery).
+ *  Throws when the list is unreadable. */
 export async function pscClients(psc: string): Promise<Set<string>> {
-  const f = psc === LAB_CUSTOMER_ID ? `or=(default_dropoff_id.eq.${psc},default_dropoff_id.is.null)` : `default_dropoff_id=eq.${psc}`;
+  const f = psc === LAB_CUSTOMER_ID
+    ? `or=(default_dropoff_id.eq.${psc},default_dropoff_id.is.null,client_code.in.(${LAB_WATCHED_CLIENTS.join(",")}))`
+    : `default_dropoff_id=eq.${psc}`;
   const rows = await sbSelect<{ customer_id: string }>("master_clients_read", `select=customer_id&${f}&limit=5000`);
   return new Set(rows.map((r) => r.customer_id));
 }
