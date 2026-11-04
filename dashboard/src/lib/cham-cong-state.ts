@@ -1,4 +1,4 @@
-import { parseVnTimestamp } from "./time";
+import { parseLiveTs } from "./cham-cong-geo";
 
 /**
  * What the one chấm-công button does next, from today's tasks alone.
@@ -21,7 +21,8 @@ export interface PunchTask {
   job_id: number;
   type: "check-in" | "check-out";
   done: boolean;
-  /** VN "YYYY-MM-DD HH:MM:SS": the later of creation and completion. */
+  /** The later of creation and completion, as Cartrack sends it:
+   *  "2026-11-04 19:25:51.163837+07" (parseLiveTs). */
   at: string | null;
 }
 
@@ -53,8 +54,10 @@ export function nextPunch(tasks: PunchTask[], now: Date, midpoint: number | null
   // A task left open (a failed completion, or one made before one-tap) is finished first.
   if (!last.done) return { action: "complete", job_id: last.job_id, type: last.type };
   const type = tasks.some((t) => t.type === "check-in") || firstIsOut ? "check-out" : "check-in";
-  // An unreadable time does not block: NaN never compares as "too soon".
-  const until = parseVnTimestamp(last.at).getTime() + PUNCH_GAP_MIN * 60_000;
+  // An unreadable time does not block: NaN never compares as "too soon". (Reading
+  // Cartrack's "+07" stamps with parseVnTimestamp made EVERY time unreadable, so the
+  // gap never held — a 05:42 check-in took a 05:43 check-out, 2026-11-04.)
+  const until = parseLiveTs(last.at) + PUNCH_GAP_MIN * 60_000;
   if (now.getTime() < until) return { action: "wait", type, until: new Date(until).toISOString() };
   return { action: "create", type };
 }

@@ -77,6 +77,9 @@ assert.ok(again.action === "wait" && again.type === "check-out", "the 10-minute 
 assert.deepEqual(nextPunch([t(1, "check-out", true, "2026-11-03 06:00:00")], NOW),
   { action: "create", type: "check-in" }, "a day with only a check-out (made by điều phối) still gets its check-in");
 assert.deepEqual(nextPunch([t(1, "check-in", true, "?")], NOW), { action: "create", type: "check-out" }, "an unreadable time does not block");
+// The format Cartrack really sends (2026-11-04: a 05:42 check-in took a 05:43 check-out).
+const real2 = nextPunch([t(1, "check-in", true, "2026-11-03 07:17:00.163837+07")], NOW);
+assert.ok(real2.action === "wait" && Date.parse(real2.until) === Date.parse("2026-11-03T07:27:00.163+07:00"), "the gap holds on Cartrack's own stamps");
 
 // ── first tap after the middle of today's shift is a check-out ──
 const D = "2026-11-03";

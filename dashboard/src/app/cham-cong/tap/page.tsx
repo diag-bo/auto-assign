@@ -63,13 +63,12 @@ const STEPS: [string, string][] = [
   ["places", "· Điểm được phép"],
   ["config", "  · Config"],
   ["route", "  · Chuyến hôm nay"],
-  ["coords", "  · Toạ độ điểm"],
   ["shift", "· Ca hôm nay"],
-  ["task_coords", "Toạ độ task đang mở"],
+  ["coords", "Toạ độ điểm khách (không ở chi nhánh)"],
   ["lock", "Khoá chống bấm 2 lần"],
   ["create", "Tạo task"],
-  ["record", "Ghi id task"],
   ["complete", "Hoàn thành task"],
+  ["record", "· Ghi id task (cùng lúc)"],
   ["total", "Tổng trên máy chủ"],
 ];
 

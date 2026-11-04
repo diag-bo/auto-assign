@@ -373,6 +373,17 @@ export async function completeJob(
   return { ok: res.ok, status: res.status, body };
 }
 
+/** Completes a job the way Cartrack's web app does (delivery_complete_job): 0.7 s
+ *  against 2.9 s for the REST PUT, measured side by side on the test driver
+ *  2026-11-04. Both log the same ADMIN FORCE_COMPLETE and stamp started = arrived =
+ *  completed at the call, so payroll reads either the same. REST when the RPC fails. */
+export async function completeJobFast(jobId: number, env: Env = "prod"): Promise<{ ok: boolean; status: number | null; via: "rpc" | "rest" }> {
+  const rpc = await jsonRpc("delivery_complete_job", { data: { jobId, statusRemarks: null } }, { env });
+  if (rpc.ok) return { ok: true, status: 200, via: "rpc" };
+  const rest = await completeJob(jobId, env);
+  return { ok: rest.ok, status: rest.status, via: "rest" };
+}
+
 /** Blanks customer fields through the web app's own RPC. The REST PUT answers 200 to
  *  an empty address_line_2 / email / … and keeps the old value (verified on D030,
  *  2026-10-13: "", null and " " all ignored), so clearing one needs this path.

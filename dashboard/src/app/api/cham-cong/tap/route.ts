@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { completeJob, createJob, deleteJob, getJobsDetailsFast, getLiveDrivers, getStopsByLabels, isDriverUnavailableError, type Env } from "@/lib/cartrack";
+import { completeJobFast, createJob, deleteJob, getJobsDetailsFast, getLiveDrivers, getStopsByLabels, isDriverUnavailableError, type Env } from "@/lib/cartrack";
 import { loadConfig, isValidDriverId } from "@/lib/config";
 import { driverJobs } from "@/lib/day-snapshot";
 import { DIAG_LOCATIONS } from "@/lib/diag-locations";
 import { NV_COOKIE, verifySession } from "@/lib/driver-session";
 import { CHAM_CONG_PREFIX } from "@/lib/job-filters";
 import { acquireCreateLock, releaseCreateLock, getChamCongIds, setChamCongIds, addChamCongId } from "@/lib/smart-log-kv";
-import { vnDate, parseVnTimestamp } from "@/lib/time";
-import { agreesWithCartrack, browserFix, CHAM_CONG_RADIUS_M, pickPlace, placeCoords, positionOf, type Place } from "@/lib/cham-cong-geo";
+import { vnDate } from "@/lib/time";
+import { agreesWithCartrack, browserFix, CHAM_CONG_RADIUS_M, parseLiveTs, pickPlace, placeCoords, positionOf, type LatLng, type Place } from "@/lib/cham-cong-geo";
+import { PSC_ROUTES } from "@/lib/psc-routes-data";
 import { nextPunch, sameNext, shiftMidpoint, type NextPunch, type PunchTask } from "@/lib/cham-cong-state";
 import { sbSelect } from "@/lib/supabase-rest";
 import { staffCode } from "@/lib/display-names";
@@ -39,6 +40,19 @@ const PILOT_DRIVERS = new Set(["8094d712-0f78-11f0-b96d-506b8d982279"]); // prod
 // branch, so it is not in DIAG_LOCATIONS.
 const DEPOT = { customer_id: "0452953a-f967-11ef-8764-506b8d9879b5", name: "D000" };
 const BRANCHES = new Map([...DIAG_LOCATIONS.map((l) => [l.customer_id, l.name] as const), [DEPOT.customer_id, DEPOT.name]]);
+
+// Branch coordinates are already in the code (PSC_ROUTES, checked equal to Cartrack's
+// customer records 2026-11-04), so only a CLIENT stop costs a lookup — ~1.8 s on a
+// cold instance, a quarter of the tap. D000 is no PSC route, and D030's PSC point is
+// 4 km off its Cartrack record (the test PSC), so both are pinned to Cartrack's here.
+const D030 = DIAG_LOCATIONS.find((l) => l.name === "D030")?.customer_id ?? "";
+const KNOWN_COORDS = new Map<string, LatLng>([
+  ...PSC_ROUTES.flatMap((r) => (r.lat != null && r.lon != null ? [[r.pickup, { lat: r.lat, lon: r.lon }] as const] : [])),
+  [DEPOT.customer_id, { lat: 10.77846, lon: 106.67974 }],
+  [D030, { lat: 9.998509, lon: 105.775258 }],
+]);
+
+type PlaceRef = Omit<Place, "lat" | "lon">;
 
 type Ms = Record<string, number>;
 const timed = async <T,>(ms: Ms, name: string, p: Promise<T>): Promise<T> => {
@@ -73,7 +87,7 @@ async function chamCongJobsToday(driverId: string, today: string, env: Env): Pro
 }
 
 const later = (a: string | null | undefined, b: string | null | undefined) =>
-  !a ? b ?? null : !b ? a : parseVnTimestamp(b) > parseVnTimestamp(a) ? b : a;
+  !a ? b ?? null : !b ? a : parseLiveTs(b) > parseLiveTs(a) ? b : a;
 
 function toTask(j: any): PunchTask & { place: string | null; customer_id: string | null } {
   const stop = (j.stops ?? [])[0] ?? {};
@@ -89,7 +103,8 @@ function toTask(j: any): PunchTask & { place: string | null; customer_id: string
 
 const placeName = (customerId: string, fallback: string) => BRANCHES.get(customerId) ?? fallback;
 
-/** Config branches naming this driver, and their first and last stop of the day. */
+/** Config branches naming this driver, and their first and last stop of the day.
+ *  Names only: coordinates are resolved at the tap, and only where needed. */
 async function allowedPlaces(driverId: string, today: string, env: Env, ms: Ms) {
   const [config, jobs] = await Promise.all([
     timed(ms, "config", loadConfig({ requireCurrentDay: true }).catch(() => null)),
@@ -106,23 +121,13 @@ async function allowedPlaces(driverId: string, today: string, env: Env, ms: Ms) 
     .filter((j) => !(j.reference_number ?? "").startsWith(CHAM_CONG_PREFIX) && j.job_status_id !== 3 && j.job_status_id !== 7)
     .flatMap((j) => j.stops.map((s) => ({ s, t: s.activity_completed_ts ?? j.scheduled_delivery_ts ?? "" })))
     .filter((x) => x.s.customer_id)
-    .sort((a, b) => parseVnTimestamp(a.t).getTime() - parseVnTimestamp(b.t).getTime());
-  const first = stops[0]?.s, last = stops.at(-1)?.s;
-
-  const want = new Map<string, { name: string; why: Place["why"] }>();
-  for (const id of branchIds) want.set(id, { name: placeName(id, id), why: "branch" });
-  const coords = await timed(ms, "coords", Promise.all(
-    [...new Set([...branchIds, first?.customer_id, last?.customer_id].filter((x): x is string => !!x))]
-      .map(async (id) => [id, await placeCoords(id, env)] as const)));
-  const at = new Map(coords);
-  const place = (id: string | undefined, name: string, why: Place["why"]): Place | null => {
-    const c = id ? at.get(id) : null;
-    return id && c ? { customer_id: id, name, why, ...c } : null;
-  };
+    .sort((a, b) => parseLiveTs(a.t) - parseLiveTs(b.t));
+  const ref = (x: (typeof stops)[number] | undefined, why: Place["why"]): PlaceRef | null =>
+    x ? { customer_id: x.s.customer_id!, name: placeName(x.s.customer_id!, x.s.customer_name), why } : null;
   return {
-    branches: [...branchIds].map((id) => place(id, placeName(id, id), "branch")).filter((p): p is Place => !!p),
-    first: first ? place(first.customer_id, placeName(first.customer_id!, first.customer_name), "first_stop") : null,
-    last: last ? place(last.customer_id, placeName(last.customer_id!, last.customer_name), "last_stop") : null,
+    branches: [...branchIds].map((id): PlaceRef => ({ customer_id: id, name: placeName(id, id), why: "branch" })),
+    first: ref(stops[0], "first_stop"),
+    last: ref(stops.at(-1), "last_stop"),
   };
 }
 
@@ -224,21 +229,30 @@ export async function POST(req: NextRequest) {
     return reply({ reason: "mismatch", error: `Vị trí điện thoại không khớp với app Cartrack. ${REFRESH_IN_APP}`, ...seen, next }, 409);
   }
 
-  let candidates: Place[];
+  let refs: PlaceRef[];
   if (next.action === "complete") {
     // A task left open (a failed completion, or one made before one-tap): only its own place.
     const task = tasks.find((t) => t.job_id === next.job_id)!;
-    const c = task.customer_id ? await timed(ms, "task_coords", placeCoords(task.customer_id, env)) : null;
-    candidates = task.customer_id && c ? [{ customer_id: task.customer_id, name: task.place ?? "", why: "branch", ...c }] : [];
+    refs = task.customer_id ? [{ customer_id: task.customer_id, name: task.place ?? "", why: "branch" }] : [];
   } else {
     if (!places) return reply({ error: "Không đọc được danh sách điểm chấm công, vui lòng thử lại.", next }, 502);
     const stop = next.type === "check-in" ? places.first : places.last;
-    candidates = [...places.branches, ...(stop ? [stop] : [])];
+    refs = [...places.branches, ...(stop ? [stop] : [])];
   }
-  if (candidates.length === 0) {
+  if (refs.length === 0) {
     return reply({ reason: "no_places", error: "Hôm nay bạn chưa có điểm chấm công nào (không có trong config, chưa có chuyến). Vui lòng liên hệ điều phối.", next }, 409);
   }
-  const verdict = pickPlace(fix, candidates);
+  // Known places first, for free; a client stop is looked up only if none of them is near.
+  const known = refs.flatMap((r) => { const c = KNOWN_COORDS.get(r.customer_id); return c ? [{ ...r, ...c }] : []; });
+  const unknown = refs.filter((r) => !KNOWN_COORDS.has(r.customer_id));
+  let verdict = pickPlace(fix, known);
+  if (!verdict.near && unknown.length) {
+    const looked = await timed(ms, "coords", Promise.all(unknown.map(async (r) => {
+      const c = await placeCoords(r.customer_id, env);
+      return c ? [{ ...r, ...c }] : [];
+    })));
+    verdict = pickPlace(fix, [...known, ...looked.flat()]);
+  }
   if (!verdict.near) {
     const far = verdict.nearest ? ` Bạn đang cách ${verdict.nearest.name} khoảng ${verdict.distance_m}m.` : "";
     return reply({ reason: "far", error: `Bạn chưa ở điểm chấm công.${far}`, nearest: verdict.nearest?.name ?? null, distance_m: verdict.distance_m, ...seen, next }, 409);
@@ -276,10 +290,13 @@ export async function POST(req: NextRequest) {
       return reply({ error: "Tạo chấm công chưa thành công, vui lòng thử lại. Liên hệ điều phối nếu vẫn gặp lỗi!", next }, 502);
     }
     jobId = id;
-    await timed(ms, "record", addChamCongId(today, driverId, jobId));
   }
 
-  const done = await timed(ms, "complete", completeJob(jobId, env));
+  // Recording the id and completing are independent: run them side by side.
+  const [done] = await Promise.all([
+    timed(ms, "complete", completeJobFast(jobId, env)),
+    next.action === "create" ? timed(ms, "record", addChamCongId(today, driverId, jobId)) : null,
+  ]);
   if (!done.ok) console.warn(`[cham-cong/tap] complete failed job=${jobId} status=${done.status}`);
   const at = new Date().toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
   const what = next.type === "check-in" ? "vào ca" : "ra ca";
