@@ -25,7 +25,7 @@ const { getDueTomorrowJobs } = await import("../src/lib/scheduled-dispatch");
 const labels = ["📅 Lịch cố định"];
 const customer = "51bfb168-446f-11ed-888f-506b8dbc8dfb";
 const chat = "zgr-1c7aa981bbcf52910bde";
-const message = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi ạ. Bên mình hôm nay có mẫu không, cho Diag xin xác nhận với ạ?\n👉 Nếu hôm nay không có mẫu, tag **@Bot Điều Phối X** và nhắn \"không có mẫu\", \"chưa có mẫu\" hoặc tương tự!";
+const message = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi, cho Diag xin xác nhận với ạ!\n👉 Nếu hôm nay không có mẫu, tag **@Bot Điều Phối X** và nhắn \"không có mẫu\", \"chưa có mẫu\" hoặc tương tự!";
 const now = new Date("2026-09-29T23:35:00+07:00");
 
 function job(id: number, change: Partial<Job> = {}): Job {

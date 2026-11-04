@@ -6,7 +6,7 @@ import type { Job, LogLevel } from "./types";
 import { sendZaloMessage } from "./zalo";
 
 export const PICKUP_REMINDER_CLAIM = "fixed-pickup-reminder";
-const MESSAGE = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi ạ. Bên mình hôm nay có mẫu không, cho Diag xin xác nhận với ạ?";
+const MESSAGE = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi, cho Diag xin xác nhận với ạ!";
 
 /** Call only after Cartrack confirms that a queue-driver job was released. */
 export async function remindScheduledPickup(
