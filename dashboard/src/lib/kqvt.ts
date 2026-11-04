@@ -25,13 +25,14 @@
  * 30 min, the ride home the cleanup cancels. No job exists until the items reach the
  * drop-off: only then is the collect job made there, given to the client's driver.
  * Until that the item is a list entry with a negative key (waitingKey). Anything else
- * that is not the plain case — a booking PSC off the chain, a client dropping at D001
- * (or with no drop-off, which means D001) — gets its collect job unassigned, for the
- * dispatcher.
+ * that is not the plain case — a booking PSC off the chain, a D001 client booked at
+ * another PSC — gets its collect job unassigned, for the dispatcher. (Since 2026-11-03
+ * a PSC books only clients whose default drop-off is itself, so only the plain case
+ * is reached.)
  *
  * NEAR (supervisor, 2026-10-27): a client less than NEAR_KM by road from the booking
  * PSC gets one DIRECT 2-stop job instead — pick up at the PSC, deliver to the client —
- * given to the client's driver (D001 clients unassigned). It wins over multi-leg. Its
+ * given to the client's driver. It wins over multi-leg. Its
  * item is done when the delivery stop is.
  *
  * Adding a to-do to a live job: the REST stop PUT REPLACES a stop's to-do list, so the
@@ -127,7 +128,8 @@ export function chainFrom(psc: string): string[] {
 export function planDelivery(booking: string, dropoff: string | null): { collectAt: string; hops: string[]; autoAssign: boolean } {
   // No default drop-off on the master list means D001 (supervisor, 2026-10-25).
   dropoff ??= LAB_CUSTOMER_ID;
-  if (dropoff === booking) return { collectAt: booking, hops: [], autoAssign: dropoff !== LAB_CUSTOMER_ID };
+  // D001 too (supervisor, 2026-11-04): it was left to the dispatcher until then.
+  if (dropoff === booking) return { collectAt: booking, hops: [], autoAssign: true };
   const chain = chainFrom(dropoff);
   const k = chain.indexOf(booking);
   if (k > 0) return { collectAt: dropoff, hops: chain.slice(0, k).reverse(), autoAssign: false };

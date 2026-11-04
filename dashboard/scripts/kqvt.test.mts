@@ -75,10 +75,11 @@ assert.deepEqual(chainFrom(D014), [D014, D007, D001]);
 assert.deepEqual(chainFrom(D001), [D001]);
 // Plain case: booked where the client drops → auto-assigned there.
 assert.deepEqual(planDelivery(D002, D002), { collectAt: D002, hops: [], autoAssign: true });
-// D001 clients — and those with no drop-off, which means D001 — are never auto-assigned.
-assert.deepEqual(planDelivery(D001, D001), { collectAt: D001, hops: [], autoAssign: false });
+// Booked at D001 for a D001 client (or one with no drop-off) → auto-assigned too (2026-11-04);
+// a D001 client booked elsewhere is not the plain case.
+assert.deepEqual(planDelivery(D001, D001), { collectAt: D001, hops: [], autoAssign: true });
 assert.deepEqual(planDelivery(D002, D001), { collectAt: D002, hops: [], autoAssign: false });
-assert.deepEqual(planDelivery(D001, null), { collectAt: D001, hops: [], autoAssign: false });
+assert.deepEqual(planDelivery(D001, null), { collectAt: D001, hops: [], autoAssign: true });
 assert.deepEqual(planDelivery(D002, null), { collectAt: D002, hops: [], autoAssign: false });
 // On the chain → ride the returns down it; collect job waits at the drop-off.
 assert.deepEqual(planDelivery(D001, D014), { collectAt: D014, hops: [D007, D014], autoAssign: false });

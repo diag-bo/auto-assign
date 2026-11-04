@@ -22,7 +22,6 @@ import { loadConfig } from "@/lib/config";
 import { loadLeaveEntries } from "@/lib/leave-config";
 import { shortCode } from "@/lib/psc-dup";
 import { placeLabel } from "@/lib/place-label";
-import { LAB_CUSTOMER_ID } from "@/lib/job-filters";
 import { indexCustomer, rankCustomers, type Customer, type Indexed } from "@/lib/customer-search";
 import { vnDate, vnTimestamp } from "@/lib/time";
 import { acquireCreateLock, releaseCreateLock, pushRunLog } from "@/lib/smart-log-kv";
@@ -207,7 +206,7 @@ export async function POST(req: NextRequest) {
         const dropoff = await defaultDropoff(d.customer_id);
         const near = route.lat != null && route.lon != null && await isNear({ lat: route.lat, lon: route.lon }, info.at).catch(() => false);
         const plan = near
-          ? { collectAt: route.pickup, hops: [] as string[], autoAssign: (dropoff ?? LAB_CUSTOMER_ID) !== LAB_CUSTOMER_ID }
+          ? { collectAt: route.pickup, hops: [] as string[], autoAssign: true }
           : planDelivery(route.pickup, dropoff);
         const route_ = plan.hops.map(pscName).join(" → ");
         const noteLine = [collectTodo(item, client), ...mine.map((u, i) => `Ảnh ${i + 1}: ${u}`)].join("\n");
@@ -261,7 +260,7 @@ export async function POST(req: NextRequest) {
           ...(near ? { direct: true } : {}),
           // Smart client, nobody given: parked on the proxy until the cycle hands it to the
           // driver of the client's pickup once they are at the PSC (lib/kqvt.ts). D001
-          // clients too (supervisor, 2026-11-04), though D001 assigns nobody at booking.
+          // clients too (supervisor, 2026-11-04).
           ...(!near && !res.driverId && config && isSmartClient(config, d.customer_id) ? { smart: true } : {}),
         };
         await savePending(entry);
