@@ -6,7 +6,13 @@ import type { Job, LogLevel } from "./types";
 import { sendZaloMessage } from "./zalo";
 
 export const PICKUP_REMINDER_CLAIM = "fixed-pickup-reminder";
-const MESSAGE = "Dạ, sắp đến giờ lấy mẫu cố định của bên mình rồi, cho Diag xin xác nhận với ạ!";
+/** The pickup window's start the way clients write it: "09:00:00+07:00" → "9h",
+ *  "09:30" → "9h30". Left out when the job has no window. */
+const message = (time?: string) => {
+  const m = /^(\d{2}):(\d{2})/.exec(time ?? "");
+  const at = m ? ` **${Number(m[1])}h${m[2] === "00" ? "" : m[2]}**` : "";
+  return `Dạ, sắp đến chuyến lấy mẫu cố định${at} của bên mình rồi, cho Diag xin xác nhận với ạ!`;
+};
 
 /** Call only after Cartrack confirms that a queue-driver job was released. */
 export async function remindScheduledPickup(
@@ -48,7 +54,7 @@ export async function remindScheduledPickup(
     if (!(await claimLateAlert(job.job_id, env, 86400, PICKUP_REMINDER_CLAIM))) return;
     for (const group of groups) {
       const bot = botOf(group)!;
-      const text = `${MESSAGE}\n👉 Nếu hôm nay không có mẫu, tag **${mentionOf(bot)}** và nhắn "không có mẫu", "chưa có mẫu" hoặc tương tự!`;
+      const text = `${message(pickup.delivery_windows?.[0]?.time_from)}\n👉 Nếu hôm nay không có mẫu, tag **${mentionOf(bot)}** và nhắn "không có mẫu", "chưa có mẫu" hoặc tương tự!`;
       if (!(await sendZaloMessage(clientBotToken(bot), group.chat_id, text, "markdown"))) {
         log(`Job ${job.job_id} - Fixed-pickup Zalo reminder failed`, "WARN");
       } else {
