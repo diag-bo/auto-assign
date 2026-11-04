@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { BASE_URL, getHeaders, getCustomerById } from "@/lib/cartrack";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
-import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, defaultDropoff, deliverTodo, isNear, isSmartClient, loadBooked, parkCollect, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
+import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, deliverTodo, isNear, isSmartClient, kqvtDropoff, loadBooked, parkCollect, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
 import { loadConfig } from "@/lib/config";
 import { loadLeaveEntries } from "@/lib/leave-config";
 import { shortCode } from "@/lib/psc-dup";
@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
         const record = () => logBooking(log, { bid: item.bid!, ts: vnTimestamp().slice(11, 16), client, text: item.text, note: item.note, links: mine }).catch(() => {});
         // Under NEAR_KM by road → one direct PSC → client job; else multi-leg clients ride
         // the return trips to their default drop-off (lib/kqvt.ts). Near wins.
-        const dropoff = await defaultDropoff(d.customer_id);
+        const { dropoff, early } = await kqvtDropoff(d.customer_id);
         const near = route.lat != null && route.lon != null && await isNear({ lat: route.lat, lon: route.lon }, info.at).catch(() => false);
         const plan = near
           ? { collectAt: route.pickup, hops: [] as string[], autoAssign: true }
@@ -240,7 +240,7 @@ export async function POST(req: NextRequest) {
         // Multi-leg: no job yet. The item waits on the list and rides the return trips;
         // its collect job is made at the drop-off when it arrives (lib/kqvt.ts).
         if (plan.hops.length) {
-          const entry: KqvtEntry = { ...base, job_id: waitingKey(), origin: route.pickup, at: route.pickup, hops: plan.hops };
+          const entry: KqvtEntry = { ...base, job_id: waitingKey(), origin: route.pickup, at: route.pickup, hops: plan.hops, ...(early ? { early: true } : {}) };
           await savePending(entry);
           pending.push(entry);
           await record();

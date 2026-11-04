@@ -5,7 +5,7 @@
  * in a smart ranking, and who collects for a smart client.
  */
 import assert from "node:assert/strict";
-import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
+import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, pickupDriverAt, KQVT_VIA, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
 import { returnRideable } from "../src/lib/return-trips";
 import { PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "../src/lib/job-filters";
 import type { Job, Mapping } from "../src/lib/types";
@@ -175,5 +175,22 @@ assert.equal(await isNear({ lat: 10.775, lon: 106.673 }, null), false);
   assert.equal(smartCollector(e, [pickupH, done(21, "H", [[1, "PSC", "09:59"]])], now), null);
   // The waiting status on /qr.
   assert.match(bookedStatus("b1", null, [tagged({ job_id: 5, smart: true })]).status, /Chờ tài xế đi lấy mẫu tại khách ghé D030/);
+}
+
+// AIH (KQVT_VIA): booked at D001, planned to D019 → rides the D001 → D019 return first.
+{
+  const D019 = KQVT_VIA["46069949"].via;
+  assert.deepEqual(planDelivery(D001, D019), { collectAt: D019, hops: [D019], autoAssign: false });
+  // Waiting at D001: the PSC is told either may come for it.
+  const waiting = tagged({ job_id: -5, origin: D001, at: D001, hops: [D019], psc: D019, early: true });
+  assert.match(bookedStatus("b1", null, [waiting]).status, /hoặc tài xế của khách ghé lấy/);
+  // The client's pickup driver at D001 (last stop a drop-off there) is found for it.
+  const now = Date.parse("2026-11-04T10:00:00+07:00");
+  const jobs = [
+    { job_id: 1, job_status_id: 4, delivery_driver_id: "H", labels: [], stops: [{ stop_type_id: 1, customer_id: "X", stop_status_id: 1 }] },
+    { job_id: 2, job_status_id: 5, delivery_driver_id: "H", labels: [], stops: [{ stop_type_id: 2, customer_id: D001, stop_status_id: 4, activity_completed_ts: "2026-11-04 09:30:00" }] },
+  ] as unknown as Job[];
+  assert.equal(pickupDriverAt("X", D001, jobs, now)?.driverId, "H");
+  assert.equal(pickupDriverAt("X", D019, jobs, now), null);
 }
 console.log("kqvt: ok");

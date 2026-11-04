@@ -85,6 +85,9 @@ export interface KqvtEntry {
    *  gives it to the driver of the client's sample pickup once they are at the PSC
    *  (smartCollector). */
   smart?: boolean;
+  /** Multi-leg (KQVT_VIA): also collected where it waits, by the driver of the client's
+   *  sample pickup, if they are there before a return trip takes it. */
+  early?: boolean;
 }
 
 export const NEAR_KM = 3;
@@ -134,6 +137,26 @@ export function planDelivery(booking: string, dropoff: string | null): { collect
   const k = chain.indexOf(booking);
   if (k > 0) return { collectAt: dropoff, hops: chain.slice(0, k).reverse(), autoAssign: false };
   return { collectAt: booking, hops: [], autoAssign: false };
+}
+
+const D019 = "a693faa0-3d8a-11ed-9fed-506b8dbc8dfb";
+
+/** Accounts whose KQ/VT rides the return trip to a PSC near them first, whatever their
+ *  default drop-off (supervisor, 2026-11-04). AIH: D001 → D019 → AIH — or straight from
+ *  D001 when the driver of AIH's sample pickup is there before a ride (`early`). DYM D7
+ *  needs no entry: its default drop-off is already D006. */
+export const KQVT_VIA: Record<string, { via: string; early: boolean }> = {
+  "46069949": { via: D019, early: true }, // BV Quốc tế Mỹ AIH
+};
+
+/** Where a KQ/VT trip plans to: KQVT_VIA's PSC for those accounts, else the client's
+ *  default drop-off (null when unknown). */
+export async function kqvtDropoff(clientId: string): Promise<{ dropoff: string | null; early: boolean }> {
+  const rows = await sbSelect<{ default_dropoff_id: string | null; client_code: string | null }>(
+    "master_clients_read", `select=default_dropoff_id,client_code&customer_id=eq.${clientId}&limit=1`,
+  ).catch(() => []);
+  const via = KQVT_VIA[rows[0]?.client_code ?? ""];
+  return via ? { dropoff: via.via, early: via.early } : { dropoff: rows[0]?.default_dropoff_id ?? null, early: false };
 }
 
 /** The client's default drop-off from the master client list; null when unknown. */
@@ -338,7 +361,7 @@ export function bookedStatus(bid: string, ending: Ending | null, entries: KqvtEn
   if (e.job_id < 0) {
     const hop = e.hops?.[0];
     if (e.leg_job && hop) return { status: `Đang trên chuyến về ${pscName(hop)}`, tone: "move", job: e.leg_job };
-    if (hop) return { status: `Chờ chuyến về ${pscName(hop)} tại ${pscName(e.at!)}`, tone: "wait", job: null };
+    if (hop) return { status: `Chờ chuyến về ${pscName(hop)} tại ${pscName(e.at!)}${e.early && e.at === e.origin ? " hoặc tài xế của khách ghé lấy" : ""}`, tone: "wait", job: null };
     return { status: `Đã tới ${e.psc_name}, đang tạo chuyến lấy`, tone: "move", job: null };
   }
   if (e.direct) {
@@ -514,9 +537,13 @@ export const AT_PSC_RECENT_MS = 5 * 60_000;
  * is a drop-off there, or they completed one there in the last 5 minutes. So the items
  * leave with the driver already going to that client. Null = nobody yet; ask next cycle.
  */
-export function smartCollector(e: KqvtEntry, jobs: Job[], now: number): { driverId: string; name: string | undefined } | null {
+export const smartCollector = (e: KqvtEntry, jobs: Job[], now: number) => pickupDriverAt(e.client_id, e.psc, jobs, now);
+
+/** The driver holding `clientId`'s not-started sample pickup who is at `psc` now (see
+ *  smartCollector); null when none. */
+export function pickupDriverAt(clientId: string, psc: string, jobs: Job[], now: number): { driverId: string; name: string | undefined } | null {
   for (const p of jobs) {
-    if (!pickupAtClient(p, e.client_id)) continue;
+    if (!pickupAtClient(p, clientId)) continue;
     const id = p.delivery_driver_id!;
     let last: { t: number; atPsc: boolean } | null = null, recent = false;
     for (const j of jobs) {
@@ -524,7 +551,7 @@ export function smartCollector(e: KqvtEntry, jobs: Job[], now: number): { driver
       for (const s of j.stops ?? []) {
         const t = s.stop_status_id === 4 ? parseVnTimestamp(s.activity_completed_ts).getTime() : NaN;
         if (!Number.isFinite(t)) continue;
-        const atPsc = s.stop_type_id === 2 && s.customer_id === e.psc;
+        const atPsc = s.stop_type_id === 2 && s.customer_id === psc;
         if (!last || t > last.t) last = { t, atPsc };
         if (atPsc && now - t <= AT_PSC_RECENT_MS) recent = true;
       }
@@ -601,6 +628,12 @@ export async function kqvtCycle(
       await savePending(e);
     }
     if (!e.hops?.length) return arrive(e);
+    // AIH-style (KQVT_VIA): the client's own driver at the PSC it waits at takes it there,
+    // when that comes before a ride. Only before it has left on one.
+    if (e.early && !e.leg_job && e.at === e.origin) {
+      const who = pickupDriverAt(e.client_id, e.at!, jobsToday, now);
+      if (who) return arrive({ ...e, psc: e.at!, psc_name: pscName(e.at!) }, who);
+    }
     const ride = rideFor(e, jobsToday, (j) => rideable(j, e.hops![0]));
     if (!ride) return;
     const t = legTodos(e);
@@ -612,11 +645,12 @@ export async function kqvtCycle(
   };
 
   /** At the client's drop-off: only now is the collect job made, given to the client's
-   *  driver. A failed create is retried next cycle — the item stays on the list. */
-  const arrive = async (e: KqvtEntry) => {
+   *  driver — or to `given`, the client's driver found at the PSC it waits at (early).
+   *  A failed create is retried next cycle — the item stays on the list. */
+  const arrive = async (e: KqvtEntry, given?: { driverId: string; name: string | undefined }) => {
     const psc = PSC_ROUTES.find((r) => r.pickup === e.psc);
-    const who = psc ? await pickCollector(config, leave, e.client_id, psc, env, false).catch(() => null) : null;
-    const res = await createCollectJob(e, `Chuyển từ ${pscName(e.origin!)} theo chuyến về`, who, env);
+    const who = given ?? (psc ? await pickCollector(config, leave, e.client_id, psc, env, false).catch(() => null) : null);
+    const res = await createCollectJob(e, e.origin !== e.psc ? `Chuyển từ ${pscName(e.origin!)} theo chuyến về` : "", who, env);
     if (!res.jobId) {
       log(`Giao KQ/VT FAILED - chưa tạo được chuyến lấy tại ${e.psc_name} (${res.status}) | ${pscName(e.origin!)} → ${e.client_name}`, "WARN");
       return;
