@@ -91,10 +91,11 @@ globalThis.fetch = async (input, init) => {
     events.push(`release:${id}`);
     return new Response(null, { status: [failed.job_id, tomorrowFailed.job_id].includes(id) ? 500 : 200 });
   }
-  if (url.startsWith("https://docs.google.com/spreadsheets/")) {
-    return new Response("pickup_id,dropoff_id,delivery_windows,reference,driver_id,Driver\n" +
-      `${customer},dropoff,00:10,scheduled-301,preassigned-driver,Pharmacy Driver\n`);
-  }
+  if (url.startsWith("https://sb.test/rest/v1/master_schedule_jobs")) return Response.json([{
+    id: 1, source_row: 1, revision: 1, pickup_id: customer, dropoff_id: "dropoff", driver_id: "preassigned-driver",
+    delivery_window: "00:10:00", sent_to_driver_before: 0, reference: "scheduled-301", days: Array(7).fill(true),
+    pickup: { customer_name: "Pickup" }, dropoff: { customer_name: "Dropoff" }, driver: { first_name: "Pharmacy", last_name: "Driver" },
+  }]);
   if (url.startsWith("https://bot-api.zaloplatforms.com/")) {
     const body = JSON.parse(String(init?.body)) as { chat_id: string; text: string; parse_mode?: string };
     sends.push({ url, body });
@@ -190,11 +191,11 @@ try {
   await releaseDueProxyJobs("2026-09-29", "prod", log, [noRemind]);
   assert.equal(sends.length, beforeNoRemind, "a group with the reminder switched off gets nothing");
 
-  // Stale: still fakes Lịch cố định as the retired Google Sheet, so it runs last.
+  const beforePreassign = sends.length;
   const preassigned = await releaseDueProxyJobs("2026-09-29", "prod", log, [job(301, { reference_number: "scheduled-301_2026-09-29" })]);
   assert.deepEqual(preassigned.releasedIds, [], "direct preassignment never enters the unassigned pool");
   assert.ok(events.includes("preassign:301"));
-  assert.equal(sends.length, 8, "direct preassignment also sends one reminder");
+  assert.equal(sends.length, beforePreassign + 1, "direct preassignment also sends one reminder");
   assert.ok(events.indexOf("preassign:301") < events.lastIndexOf(`send:${chat}`));
   console.log("Scheduled pickup reminder checks passed.");
 } finally {
