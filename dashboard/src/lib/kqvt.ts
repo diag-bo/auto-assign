@@ -529,9 +529,9 @@ export function smartCollector(e: KqvtEntry, jobs: Job[], now: number): { driver
   return null;
 }
 
-/** Park a smart client's collect job on the proxy driver until tonight, so it is not in
- *  the dispatcher's unassigned pool while it waits for smartCollector. The release time
- *  is set because the proxy release frees any parked job whose time is blank or past. */
+/** Park a smart client's collect job on the proxy driver, so it is not in the
+ *  dispatcher's unassigned pool while it waits for smartCollector. The proxy release
+ *  skips KQ/VT jobs (Cartrack reads the 23:59 back as the minute it was parked). */
 export const parkCollect = (jobId: number, env: Env) => parkOnProxy(jobId, `${vnDate()} 23:59:00`, env);
 
 /** A client the config serves with a smart pool (two or more candidates). */

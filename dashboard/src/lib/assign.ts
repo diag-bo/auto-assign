@@ -1520,6 +1520,10 @@ export async function releaseDueProxyJobs(
   const repaired = await repairBlankReleaseTimes(parked, dateVn, env, log);
   const now = Date.now();
   const due = parked.filter((job) => {
+    // A smart client's KQ/VT collect job waits here for its driver, and lib/kqvt.ts
+    // takes it off. Cartrack keeps no later release time on it (it reads back as the
+    // minute it was parked), so releasing by time freed it a cycle later (34519760, 04/11).
+    if ((job.labels ?? []).includes(PSC_DELIVERY_LABEL)) return false;
     // A just-repaired job is judged on the value we wrote, not on the blank the
     // list was fetched with — otherwise a repair whose time has already passed
     // waits a whole extra cycle for no reason.
