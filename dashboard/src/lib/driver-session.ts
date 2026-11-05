@@ -12,7 +12,11 @@
 import crypto from "crypto";
 
 export const NV_COOKIE = "nv_session";
-const TTL_MS = 12 * 60 * 60 * 1000; // 12h — a working day plus margin
+// 30 days. It was 12 h, "a working day plus margin" — but chấm công logs in at the
+// check-in and needs the session again at the check-out, and a 06:00–21:30 day
+// (Anh Tú) is longer than that; drivers were also logging in again every morning.
+// The cookie only ever acts as its own driver, and every tap re-checks the place.
+const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const NV_COOKIE_MAX_AGE = TTL_MS / 1000;
 
 /** HMAC key. Dedicated secret preferred; falls back to the always-present

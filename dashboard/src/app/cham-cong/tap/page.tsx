@@ -118,9 +118,10 @@ function Login({ onDone }: { onDone: () => void }) {
   return (
     <form onSubmit={submit} className="space-y-3">
       <p className="text-gray-600">Đăng nhập bằng số điện thoại và mã PIN của app Cartrack.</p>
-      <input className="w-full border rounded-lg px-3 py-3 text-lg" inputMode="tel" autoComplete="tel" placeholder="Số điện thoại"
+      {/* username + current-password: the phone's password manager offers to save and fill them. */}
+      <input className="w-full border rounded-lg px-3 py-3 text-lg" name="username" inputMode="tel" autoComplete="username" placeholder="Số điện thoại"
         value={phone} onChange={(e) => setPhone(e.target.value)} />
-      <input className="w-full border rounded-lg px-3 py-3 text-lg" type="password" inputMode="numeric" placeholder="Mã PIN"
+      <input className="w-full border rounded-lg px-3 py-3 text-lg" name="password" type="password" inputMode="numeric" autoComplete="current-password" placeholder="Mã PIN"
         value={pin} onChange={(e) => setPin(e.target.value)} />
       {error && <p className="text-red-600">{error}</p>}
       <button disabled={busy || !phone || !pin} className="w-full rounded-lg bg-blue-600 text-white py-3 text-lg font-semibold disabled:opacity-50">
