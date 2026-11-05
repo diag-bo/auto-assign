@@ -604,18 +604,19 @@ git push origin master
 
 The **GitHub→Vercel integration auto-deploys `master` to production** within ~2 minutes of the push. That push is the whole deploy — do not also run `./deploy.sh`, or you get two redundant builds of the same commit (one CLI `>_`, one git `-o-`). Always run `npm run build` from `dashboard/` before pushing (Vercel runs the same build).
 
-**`./deploy.sh` is a fallback only** — use it if the GitHub integration is ever disabled or stalls. It enforces a clean tree in sync with `origin/master`, then runs `npx vercel --prod` from the repo root. **Never run `npx vercel --prod` directly** (especially from `dashboard/`, which has no `.vercel/` link — the CLI would create an orphan project instead of deploying to `diag-logistics`). The correct `.vercel/project.json` (`prj_DQHaXcRc31jOI58J7NU8cNK1iO4C` / `diag-logistics`) lives at the repo root.
+**`./deploy.sh` is a fallback only** — use it if the GitHub integration is ever disabled or stalls. It enforces a clean tree in sync with `origin/master`, then runs `npx vercel --prod` from the repo root. **Never run `npx vercel --prod` directly** (especially from `dashboard/`, which has no `.vercel/` link — the CLI would create an orphan project instead of deploying to `diag-logistics`). The correct `.vercel/project.json` (`prj_DQHaXcRc31jOI58J7NU8cNK1iO4C` / `diag-logistics`) lives at the repo root — that is account A, retired 2026-11-05, so `./deploy.sh` now deploys to a dead project; B, C and D deploy only from their GitHub integrations.
 
 Production URL: **https://diag-logistics.vercel.app** — the one address every link,
 QR code, Zalo hook and cron job uses. It is a *movable* address that **rotates across
-three Vercel Hobby accounts**, ten days each (A `diag-logistics`, B `auto-assign` /
-`diag-bo.vercel.app`, C `diag-c`), so no account reaches its monthly CPU limit:
+three Vercel Hobby accounts**, ten days each (C `diag-c`, D `diag-d`, B `auto-assign` /
+`diag-bo.vercel.app`), so no account reaches its monthly CPU limit. The original
+account A (project `diag-logistics`) was retired 2026-11-05:
 
 - **`.github/workflows/vercel-rotate.yml`** runs hourly and moves the domain to the
   account whose turn it is (planned moves 00:00–04:59 VN), or off a paused account at
   once. Turns and project names: `ACCOUNTS` in `.github/scripts/vercel-accounts.mjs`.
-  Run it by hand with `to` = A/B/C for an emergency move. Tokens: GitHub secrets
-  `VERCEL_TOKEN_A/B/C`.
+  Run it by hand with `to` = B/C/D for an emergency move. Tokens: GitHub secrets
+  `VERCEL_TOKEN_B/C/D`.
 - **The engine follows the domain.** A cron ping that arrives on diag-logistics runs
   the engine; each account also gets a backup ping on its OWN address, which idles
   while the domain is being pinged and takes over when it is not (`primaryAlive`).

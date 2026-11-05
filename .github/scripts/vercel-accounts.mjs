@@ -9,7 +9,7 @@ export const DOMAIN = "diag-logistics.vercel.app";
 // 21–end to the third. Reorder to change who carries which ten days.
 export const ACCOUNTS = [
   { id: "C", project: "diag-c" },
-  { id: "A", project: "diag-logistics" },
+  { id: "D", project: "diag-d" },
   { id: "B", project: "auto-assign" },
 ];
 
