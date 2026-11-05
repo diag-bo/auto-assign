@@ -1275,11 +1275,16 @@ async function rpcDriverStatusGate(
   try {
     const drivers = await gateDrivers(env);
     const d = drivers.find((x) => x.delivery_driver_id === driverId);
-    if (!d) return "unknown";
-    return evalDriverAssignability(d);
-  } catch {
-    return "unknown";
-  }
+    if (d) return evalDriverAssignability(d);
+  } catch { /* REST list unreachable — the RPC live list below can still answer */ }
+  // The RPC live list holds ACTIVE accounts only, with the break flag, so a driver in
+  // it is ok or on break. Absent stays "unknown" (= let REST decide), never
+  // "deactivated". Without this, a REST outage (2026-11-05: fleetapi-vn refused every
+  // connection) sent every RPC create and assign down the dead REST path.
+  const live = await getLiveDrivers(env).catch(() => null);
+  const l = live?.find((x) => x.deliveryDriverId === driverId);
+  if (!l) return "unknown";
+  return l.onBreakSinceTs ? "on_break" : "ok";
 }
 
 /** Drivers-list micro-cache for gate lookups that arrive WITHOUT a caller-provided

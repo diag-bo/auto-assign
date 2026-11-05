@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BASE_URL, getHeaders, assignJob, type Env } from "@/lib/cartrack";
+import { assignJob, getJobDetailsFast, type Env } from "@/lib/cartrack";
 import { isCompletedOrRejectedStop } from "@/lib/job-filters";
 import { driverChoices, loadChoiceInputs, type PickerResult } from "@/lib/psc-driver-choices";
 import { pushRunLog } from "@/lib/smart-log-kv";
@@ -20,10 +20,8 @@ export const preferredRegion = "sin1";
 
 /** The trip, plus the stops every guard below turns on. */
 async function loadJob(jobId: number, env: Env) {
-  const res = await fetch(`${BASE_URL}/jobs/${jobId}`, { headers: getHeaders(env), cache: "no-store" });
-  if (!res.ok) return null;
-  const data = (await res.json())?.data;
-  if (!data) return null;
+  const data = (await getJobDetailsFast(jobId, env).catch(() => null))?.data;
+  if (!data?.job_id) return null;
   const stops: Stop[] = data.stops ?? [];
   return {
     data,
