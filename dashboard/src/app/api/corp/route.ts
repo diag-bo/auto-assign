@@ -3,7 +3,7 @@ import { createJob, type Env } from "@/lib/cartrack";
 import { PICKUP_PHOTO_TODO, DROPOFF_PHOTO_TODO } from "@/lib/job-filters";
 import { vnDate, vnHoursMinutes } from "@/lib/time";
 import { acquireCreateLock, releaseCreateLock } from "@/lib/smart-log-kv";
-import { CORP_CLINICS, CORP_DROPOFF_ID, CORP_LABEL, normalizeVnPhone } from "@/lib/corp";
+import { CORP_CLINICS, CORP_LABEL, normalizeVnPhone } from "@/lib/corp";
 import { cancelOwnTrip, pickupTripsToday } from "@/lib/pickup-trips";
 
 export const runtime = "nodejs";
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ trips });
 }
 
-// POST /api/corp — { clinic_id, phone }. Creates an unassigned clinic → D001 pickup the
+// POST /api/corp — { clinic_id, phone }. Creates an unassigned clinic → its drop-off (D001, or D006 for DYM D7) pickup the
 // assign cycle places by config. `phone` is set on THIS trip's pickup stop only; the
 // clinic's saved Cartrack number is untouched (verified 2026-09-18).
 export async function POST(req: NextRequest) {
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
 
   const { hours, minutes } = vnHoursMinutes();
   const hhmm = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-  const reference = `${clinic.short}→D001_${hhmm}`;
+  const reference = `${clinic.short}→${clinic.dropoff.code}_${hhmm}`;
 
   try {
     const res = await createJob(
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
           },
           {
             stop_type_id: 2,
-            customer_id: CORP_DROPOFF_ID,
+            customer_id: clinic.dropoff.id,
             duration: 5,
             todos: [DROPOFF_PHOTO_TODO],
           },

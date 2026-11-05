@@ -46,7 +46,7 @@ export default function CorpPage() {
       setStatus("success");
       setMessage(`Đã gửi yêu cầu lấy mẫu (Job #${data.job_id ?? "?"}).`);
       const clinic = CORP_CLINICS.find((c) => c.customer_id === clinicId);
-      if (data.job_id && clinic) setSent((prev) => [justSentTrip(data.job_id, clinic.name, "BRA - D001"), ...prev]);
+      if (data.job_id && clinic) setSent((prev) => [justSentTrip(data.job_id, clinic.name, clinic.dropoff.name), ...prev]);
       setClinicId("");
       setPhone("");
     } catch {
