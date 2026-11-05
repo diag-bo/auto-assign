@@ -7,3 +7,8 @@
 export const SELF_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
   : "https://diag-logistics.vercel.app";
+
+/** The movable address every link, QR code, Zalo hook and cron job uses. It sits on
+ *  one Vercel account at a time and rotates between them (.github/scripts/
+ *  vercel-rotate.mjs); whichever account receives pings on it runs the engine. */
+export const PRIMARY_HOST = "diag-logistics.vercel.app";

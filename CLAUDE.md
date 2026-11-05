@@ -52,7 +52,6 @@ LABCENTER_PASSWORD=              # Labcenter API password
 LABCENTER_RECEPTIONIST_EMAIL=    # Separate receptionist account for /api/labcenter/client (client search in sales form)
 LABCENTER_RECEPTIONIST_PASSWORD= # Password for receptionist account
 SMART_RECHECK=                   # Smart re-check (lib/smart-recheck.ts): unset = log-only ("RECHECK" lines + 14-day list smart:recheck:log:<env>:<date>), "live" = moves jobs, "off" = disabled
-STANDBY=                         # "1" on the BACKUP Vercel account only: its cron ping idles while another deployment's heartbeat is fresh (<6 min) and takes over the engine when it goes stale (primary paused over a plan limit, or its cron job died)
 ```
 
 ### Where the data lives
@@ -608,15 +607,26 @@ The **GitHub→Vercel integration auto-deploys `master` to production** within ~
 **`./deploy.sh` is a fallback only** — use it if the GitHub integration is ever disabled or stalls. It enforces a clean tree in sync with `origin/master`, then runs `npx vercel --prod` from the repo root. **Never run `npx vercel --prod` directly** (especially from `dashboard/`, which has no `.vercel/` link — the CLI would create an orphan project instead of deploying to `diag-logistics`). The correct `.vercel/project.json` (`prj_DQHaXcRc31jOI58J7NU8cNK1iO4C` / `diag-logistics`) lives at the repo root.
 
 Production URL: **https://diag-logistics.vercel.app** — the one address every link,
-QR code, Zalo hook and cron job uses. It is a *movable* address, not tied to an account:
-since 2026-10-31 it sits on **account B** (project `auto-assign`, also
-`https://diag-bo.vercel.app`), because account A was paused for going over the Hobby
-limits. **Failover runbook:** if the account holding it is paused, remove the domain in
-that project's Settings → Domains and add it to the other account's project straight
-away; nothing else needs to change. Never set `STANDBY=1` on the account that holds it.
+QR code, Zalo hook and cron job uses. It is a *movable* address that **rotates across
+three Vercel Hobby accounts**, ten days each (A `diag-logistics`, B `auto-assign` /
+`diag-bo.vercel.app`, C `diag-c`), so no account reaches its monthly CPU limit:
+
+- **`.github/workflows/vercel-rotate.yml`** runs hourly and moves the domain to the
+  account whose turn it is (planned moves 00:00–04:59 VN), or off a paused account at
+  once. Turns and project names: `ACCOUNTS` in `.github/scripts/vercel-accounts.mjs`.
+  Run it by hand with `to` = A/B/C for an emergency move. Tokens: GitHub secrets
+  `VERCEL_TOKEN_A/B/C`.
+- **The engine follows the domain.** A cron ping that arrives on diag-logistics runs
+  the engine; each account also gets a backup ping on its OWN address, which idles
+  while the domain is being pinged and takes over when it is not (`primaryAlive`).
+  No per-account setting — the three accounts carry identical environments.
+- **Environment variables are edited on ONE account (B) and copied** by
+  `.github/workflows/vercel-env-sync.yml`, which also redeploys. Vercel will not hand
+  back values marked "sensitive", so those come from a GitHub secret of the same name.
+
 Code that calls its own site uses `SELF_URL` (`lib/self-url.ts`), never a fixed host.
 
-One GitHub Actions workflow exists: `.github/workflows/kiotviet-daily-report.yml`,
+`.github/workflows/kiotviet-daily-report.yml` is
 `workflow_dispatch`-only (manual run + `dry_run` toggle, no `schedule:`). The actual
 16:00 Asia/Ho_Chi_Minh trigger is a **cron-job.org** ping at `GET
 /api/zalo/daily-report` — same mechanism as the `/api/assign/cron` engine, chosen

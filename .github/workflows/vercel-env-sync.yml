@@ -1,0 +1,44 @@
+# Copies one Vercel account's environment variables to the other accounts and
+# rebuilds them. Edit settings on the source account only, then run this.
+# Values Vercel marks "sensitive" cannot be read back, so they come from a GitHub
+# secret of the same name. Logic: .github/scripts/vercel-env-sync.mjs.
+name: Vercel env sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Master copy account (A, B or C)
+        default: B
+      dry_run:
+        description: Only report what would change
+        type: boolean
+        default: true
+      redeploy:
+        description: Rebuild every serving account afterwards
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency: vercel-domain
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node .github/scripts/vercel-env-sync.mjs
+        env:
+          SOURCE: ${{ inputs.source }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REDEPLOY: ${{ inputs.redeploy }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          VERCEL_TOKEN_A: ${{ secrets.VERCEL_TOKEN_A }}
+          VERCEL_TOKEN_B: ${{ secrets.VERCEL_TOKEN_B }}
+          VERCEL_TOKEN_C: ${{ secrets.VERCEL_TOKEN_C }}

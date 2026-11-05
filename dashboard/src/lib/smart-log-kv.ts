@@ -3,6 +3,7 @@ import { vnDate, vnMinutesSinceMidnight, vnTimestamp } from "./time";
 import { isNoteReleaseHour } from "./job-filters";
 import type { LogEntry, PickupWarning, FailedJob, SheetAlarm, UnfinishedConfigRow, CoverageGap, BranchRule, ShiftOverlap } from "./types";
 import { scopedDropoffName } from "./unmapped-row";
+import { PRIMARY_HOST } from "./self-url";
 import type { DropoffSwapRecord } from "./psc-closing";
 
 /**
@@ -32,7 +33,7 @@ const CYCLE_LOCK_KEY = "assign:cycle_lock";
 
 // Liveness: timestamp of the last cron ping (armed or not), so the dashboard
 // can show "System last checked: HH:MM" even when nothing was logged.
-// Liveness, one field per deployment, keyed by DEPLOY_ID.
+// Liveness, one field per address pinged (see beatId).
 //
 // This replaced a single `assign:heartbeat_ts` string. That key answered "did ANY
 // ping arrive?", which stays green as long as one deployment is alive — fine with
@@ -46,12 +47,14 @@ const CYCLE_LOCK_KEY = "assign:cycle_lock";
 // for 24h as a deployment that was removed rather than one that is stale.
 const DEPLOY_HEARTBEAT_KEY = "assign:heartbeat:deployments";
 
-/** Stable per-project identity. Set DEPLOY_ID explicitly (e.g. "A" / "B").
- *  VERCEL_PROJECT_PRODUCTION_URL is the fallback because it survives redeploys,
- *  unlike VERCEL_URL which changes every build and would litter the hash with a
- *  new dead field on every push. */
-const DEPLOY_ID =
-  process.env.DEPLOY_ID || process.env.VERCEL_PROJECT_PRODUCTION_URL || "default";
+/** Beat field for a ping: the first label of the host it arrived on, so a ping on
+ *  the movable domain beats "diag-logistics" whichever account holds it, and a
+ *  backup ping on an account's own address beats that address ("diag-bo"). No env
+ *  per account — three accounts carry identical settings. */
+export function beatId(host: string): string {
+  return host.toLowerCase().split(":")[0].split(".")[0] || "default";
+}
+const PRIMARY_BEAT = beatId(PRIMARY_HOST);
 
 // ── Per-cycle dashboard snapshot: held + failed + pickup warnings ───────────
 //
@@ -192,10 +195,10 @@ export async function clearArmState(): Promise<void> {
  *  deployment, "has anything pinged?" is just the newest field, so keeping a
  *  separate key meant paying two writes for one fact. On ~680 pings/day across
  *  two accounts that second write was ~20k Redis commands a month for nothing. */
-export async function setCronHeartbeat(): Promise<void> {
+export async function setCronHeartbeat(id: string): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
-  await redis.hset(DEPLOY_HEARTBEAT_KEY, { [DEPLOY_ID]: new Date().toISOString() });
+  await redis.hset(DEPLOY_HEARTBEAT_KEY, { [id]: new Date().toISOString() });
 }
 
 /** The newest stamp across deployments. ISO-8601 sorts lexicographically, so a
@@ -214,22 +217,22 @@ export async function getCronHeartbeat(): Promise<string | null> {
   return newestBeat(parseDeploymentBeats(raw));
 }
 
-/** STANDBY gate. True when some OTHER deployment has been pinged within the stale
- *  window, i.e. the primary account is up and this one should stay idle. A Vercel
- *  account over its plan limits is paused (503 before our code runs), so its beat
- *  goes stale and the standby takes over within ~2 pings; it steps back on its own
- *  once the primary beats again. An unreadable hash answers false — running beside
- *  a live primary is safe (the cycle lock serialises them), sitting idle beside a
+/** Backup gate. True when a ping reached the movable domain within the stale
+ *  window, i.e. whichever account holds it is up and a backup ping should idle. An
+ *  account over its plan limits is paused (402 before our code runs), so the
+ *  domain's beat goes stale and the backups take over within ~2 pings; they step
+ *  back once the domain beats again. An unreadable hash answers false — running
+ *  beside a live holder is safe (the cycle lock serialises them), idling beside a
  *  dead one is not. */
-export async function otherDeploymentAlive(): Promise<boolean> {
+export async function primaryAlive(): Promise<boolean> {
   const redis = getRedis();
   if (!redis) return false;
   const raw = await redis.hgetall(DEPLOY_HEARTBEAT_KEY).catch(() => null);
-  return anyOtherFresh(raw, DEPLOY_ID);
+  return primaryFresh(raw);
 }
 
-export function anyOtherFresh(raw: unknown, self: string): boolean {
-  return parseDeploymentBeats(raw).some((b) => b.fresh && b.id !== self);
+export function primaryFresh(raw: unknown): boolean {
+  return parseDeploymentBeats(raw).some((b) => b.fresh && b.id === PRIMARY_BEAT);
 }
 
 export interface DeploymentBeat {

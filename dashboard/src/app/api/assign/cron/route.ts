@@ -5,7 +5,8 @@ import {
   acquireCycleLock,
   releaseCycleLock,
   setCronHeartbeat,
-  otherDeploymentAlive,
+  primaryAlive,
+  beatId,
 } from "@/lib/smart-log-kv";
 import { autoArmIfDue } from "@/lib/auto-arm";
 import { maybeAlertHeldOff } from "@/lib/disarm-alert";
@@ -16,6 +17,7 @@ import { createMorningReads } from "@/lib/morning-reads";
 import { recoverMorning } from "@/lib/morning-recovery";
 import { maybeAutoUpdatePickupEtas } from "@/lib/pickup-setup-auto";
 import { maybeSundayRosterPost } from "@/lib/sunday-roster-zalo";
+import { PRIMARY_HOST } from "@/lib/self-url";
 import { maybeClientBotGuides } from "@/lib/client-bot-actions";
 
 // The cycle (Cartrack + Goong calls) can take a while; give it headroom.
@@ -38,12 +40,14 @@ export async function GET(req: NextRequest) {
 
   // Liveness: record every authorized ping so the dashboard can show the system
   // is alive even when nothing gets logged.
-  await setCronHeartbeat().catch(() => {});
+  const host = req.headers.get("host") ?? "";
+  await setCronHeartbeat(beatId(host)).catch(() => {});
 
-  // Backup account (STANDBY=1): do nothing while the primary is still being pinged.
-  // When the primary stops answering (Vercel paused it over a plan limit, or its
-  // cron job died) this deployment runs the whole ping below instead.
-  if (process.env.STANDBY === "1" && (await otherDeploymentAlive())) {
+  // The engine follows the movable domain: a ping that arrived on it runs. A backup
+  // ping on an account's own address idles while the domain is being pinged, and
+  // runs the whole ping below when it is not (the holder was paused over a plan
+  // limit, or the main cron job died).
+  if (host !== PRIMARY_HOST && (await primaryAlive())) {
     return NextResponse.json({ ran: false, skipped: "standby" });
   }
 
