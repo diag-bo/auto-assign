@@ -121,6 +121,7 @@ export type LiveDriver = {
   onBreakSinceTs?: string | null;
   shiftTimeStart?: string | null;
   shiftTimeEnd?: string | null;
+  startLocationCustomer?: { customerId?: string | null } | null;
 };
 
 /**
@@ -151,6 +152,31 @@ export async function getLiveDrivers(env: Env = "prod"): Promise<LiveDriver[] | 
   // would read as "nobody is anywhere near this branch".
   if (rows.length > 0 && typeof (rows[0] as LiveDriver)?.deliveryDriverId !== "string") return null;
   return rows as LiveDriver[];
+}
+
+/** The live list in the REST Driver shape, for readers that need positions, shift
+ *  start, start location and break state — every field the engine ranks on. ~0.2s
+ *  against REST's ~3s, and it kept working through the 2026-11-05 REST outage.
+ *  Active accounts only (a deactivated driver is absent, never flagged), so
+ *  driver_status_id is 5 for on break and 4 otherwise. Null on any RPC doubt, so the
+ *  caller falls back to getDrivers. */
+export async function getActiveDriversFast(env: Env = "prod"): Promise<Driver[] | null> {
+  const live = await getLiveDrivers(env).catch(() => null);
+  if (!live) return null;
+  // RPC says "06:00:00+07", REST "06:00:00+07:00" — keep the REST spelling.
+  const restTz = (t: string | null | undefined) => (t ? t.replace(/([+-]\d{2})$/, "$1:00") : null);
+  return live.map((d): Driver => ({
+    delivery_driver_id: d.deliveryDriverId,
+    first_name: d.firstName ?? "",
+    last_name: d.lastName ?? "",
+    is_online: !!d.isLoggedIn,
+    is_active: true,
+    latitude: d.latitude ?? null,
+    longitude: d.longitude ?? null,
+    driver_status_id: d.onBreakSinceTs ? DRIVER_STATUS_ON_BREAK : 4,
+    start_location_customer_id: d.startLocationCustomer?.customerId ?? null,
+    shift_time_start: restTz(d.shiftTimeStart),
+  }));
 }
 
 export async function getDrivers(env: Env = "prod"): Promise<Driver[]> {
@@ -1272,19 +1298,21 @@ async function rpcDriverStatusGate(
   env: Env
 ): Promise<"ok" | "on_break" | "deactivated" | "unknown"> {
   if (typeof driverId !== "string" || !driverId) return "ok"; // unassigned create — nothing to gate
-  try {
-    const drivers = await gateDrivers(env);
-    const d = drivers.find((x) => x.delivery_driver_id === driverId);
-    if (d) return evalDriverAssignability(d);
-  } catch { /* REST list unreachable — the RPC live list below can still answer */ }
-  // The RPC live list holds ACTIVE accounts only, with the break flag, so a driver in
-  // it is ok or on break. Absent stays "unknown" (= let REST decide), never
-  // "deactivated". Without this, a REST outage (2026-11-05: fleetapi-vn refused every
-  // connection) sent every RPC create and assign down the dead REST path.
+  // The RPC live list first (~0.2s): it holds ACTIVE accounts only, with the break
+  // flag, so a driver in it is ok or on break. Only a driver it does not carry — a
+  // deactivated account, or one it could not answer for — asks the REST list, which
+  // knows deactivation. The REST list used to come first; with fleetapi-vn refusing
+  // connections (2026-11-05) that sent every RPC create and assign down the dead
+  // REST path.
   const live = await getLiveDrivers(env).catch(() => null);
   const l = live?.find((x) => x.deliveryDriverId === driverId);
-  if (!l) return "unknown";
-  return l.onBreakSinceTs ? "on_break" : "ok";
+  if (l) return l.onBreakSinceTs ? "on_break" : "ok";
+  try {
+    const d = (await gateDrivers(env)).find((x) => x.delivery_driver_id === driverId);
+    return d ? evalDriverAssignability(d) : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** Drivers-list micro-cache for gate lookups that arrive WITHOUT a caller-provided

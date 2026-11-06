@@ -1,5 +1,5 @@
 import type { Config, Driver, FailedJob, Job, LogEntry, LogLevel, Mapping, PickupWarning, Stop, TimelineRoute, TimelineStop } from "./types";
-import { getDrivers, getAllAssignedDriverJobs, assignJob, assignJobViaUpdate, getCustomerById, updateJobStops, parkOnProxy, updateJobSendToDriverAt, updateJobScheduledDeliveryTs, unassignJob, optimizeDriverRoute, getJobsByStatusAndDate, getUnassignedJobsFast, getJobsByDate, getTimelineRoutes, timelineRoutesToJobs, getJobDetails, jsonRpc, PROXY_DRIVER_ID, type Env } from "./cartrack";
+import { getDrivers, getActiveDriversFast, getAllAssignedDriverJobs, assignJob, assignJobViaUpdate, getCustomerById, updateJobStops, parkOnProxy, updateJobSendToDriverAt, updateJobScheduledDeliveryTs, unassignJob, optimizeDriverRoute, getJobsByStatusAndDate, getUnassignedJobsFast, getJobsByDate, getTimelineRoutes, timelineRoutesToJobs, getJobDetails, jsonRpc, PROXY_DRIVER_ID, type Env } from "./cartrack";
 import { publishSnapshot } from "./day-snapshot";
 import { getDueTomorrowJobs } from "./scheduled-dispatch";
 import { remindScheduledPickup } from "./scheduled-pickup-reminder";
@@ -1844,7 +1844,10 @@ async function prepareSmart(
 ): Promise<SmartPrep> {
   let smartRouteData: Record<string, DriverRouteInfo> = {};
   const phase1Coords = new Map<string, { lat: number; lon: number }>();
-  const fetchedDrivers = await getDrivers(env);
+  // RPC live list (~0.2s, carries every field ranked on); REST only if it fails.
+  // Deactivated accounts are absent from it, so a sub covering a deactivated driver
+  // no longer inherits that driver's start location — rare, and that driver is gone.
+  const fetchedDrivers = (await getActiveDriversFast(env)) ?? (await getDrivers(env));
   const allGpsDrivers = fetchedDrivers.filter((d) =>
     (d.latitude != null && d.longitude != null) || !!d.start_location_customer_id
   );
