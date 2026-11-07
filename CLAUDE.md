@@ -610,7 +610,7 @@ The **GitHub→Vercel integration auto-deploys `master` to production** within ~
 
 Production URL: **https://diag-logistics.vercel.app** — the one address every link,
 QR code, Zalo hook and cron job uses. It is a *movable* address that **rotates across
-three Vercel Hobby accounts**, ten days each (C `auto-assign` in team diag4 / `auto-assign-six.vercel.app`, D `diag-d`, B `auto-assign` /
+three Vercel Hobby accounts**, ten days each (C `auto-assign` in team diag4 / `auto-assign-six.vercel.app`, D `auto-assign` in team diag-bo2 / `auto-assign-eta.vercel.app`, B `auto-assign` /
 `diag-bo.vercel.app`), so no account reaches its monthly CPU limit. The original
 account A (project `diag-logistics`) was retired 2026-11-05:
 
