@@ -12,7 +12,7 @@ import { ACCOUNTS, api, inspect } from "./vercel-accounts.mjs";
 const SKIP = new Set(["STANDBY", "DEPLOY_ID"]); // retired per-account switches
 const DRY = process.env.DRY_RUN === "true";
 const github = JSON.parse(process.env.SECRETS_JSON || "{}");
-const source = ACCOUNTS.find((a) => a.id === (process.env.SOURCE || "B").toUpperCase());
+const source = ACCOUNTS.find((a) => a.id === (process.env.SOURCE || "C").toUpperCase());
 if (!source) throw new Error(`unknown source ${process.env.SOURCE}`);
 
 const tkey = (t) => [...t].sort().join("+");

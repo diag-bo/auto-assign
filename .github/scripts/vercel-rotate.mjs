@@ -1,24 +1,24 @@
-// Moves diag-logistics.vercel.app to the account whose ten days it is, and off a
-// paused account straight away. Run hourly by .github/workflows/vercel-rotate.yml;
-// every run works out the whole answer again, so a missed or late run costs nothing.
+// Moves diag-logistics.vercel.app to the account whose turn it is, and off a paused
+// account straight away. Run hourly by .github/workflows/vercel-rotate.yml; every run
+// works out the whole answer again, so a missed or late run costs nothing.
 import { ACCOUNTS, DOMAIN, api, inspect } from "./vercel-accounts.mjs";
 
 /** Pure decision. ids in rotation order; holder = id or null; healthy = Set of ids.
- *  Returns the id to move to, or null to stay. */
+ *  Returns the id to move to, or null to stay. The month is cut into one turn per
+ *  account (4 accounts: 1–8, 9–16, 17–24, 25–end). A paused account's turn passes to
+ *  the next healthy one in order — not to the holder, which would then carry two
+ *  turns running and pause too. */
 export function plan({ ids, holder, healthy, day, hour, force }) {
   if (force) return healthy.has(force) && force !== holder ? force : null;
-  const slot = day <= 10 ? 0 : day <= 20 ? 1 : 2;
-  const desired = ids[slot % ids.length];
-  // The holder is down: move now, to the desired account or the next healthy one.
-  if (!holder || !healthy.has(holder)) {
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[(slot + i) % ids.length];
-      if (healthy.has(id)) return id;
-    }
-    return null;
+  const slot = Math.min(ids.length - 1, Math.floor((day - 1) / Math.ceil(31 / ids.length)));
+  let target = null;
+  for (let i = 0; i < ids.length && !target; i++) {
+    const id = ids[(slot + i) % ids.length];
+    if (healthy.has(id)) target = id;
   }
-  if (holder === desired || !healthy.has(desired)) return null; // a paused turn waits
-  return hour < 5 ? desired : null; // planned moves only 00:00–04:59 VN, engine asleep
+  if (!target || target === holder) return null;
+  if (!holder || !healthy.has(holder)) return target; // holder down: move now
+  return hour < 5 ? target : null; // planned moves only 00:00–04:59 VN, engine asleep
 }
 
 async function main() {

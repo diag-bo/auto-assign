@@ -1,17 +1,17 @@
-# Rotates diag-logistics.vercel.app across the Vercel accounts, ten days each, and
+# Rotates diag-logistics.vercel.app across the Vercel accounts, about a week each, and
 # moves it off an account Vercel has paused. Logic and account list:
 # .github/scripts/vercel-rotate.mjs and vercel-accounts.mjs.
 #
 # Hourly: GitHub's scheduler can run late, which only delays a move. Planned moves
 # happen 00:00–04:59 VN; a paused holder is moved on the first run that sees it.
-# Run by hand with "to" = B/C/D to move it now (the schedule takes it back to the
+# Run by hand with "to" = A/B/C/D to move it now (the schedule takes it back to the
 # account whose turn it is the next night — reorder ACCOUNTS to change turns).
 #
 # OFF until the repository variable VERCEL_ROTATE is "on" (Settings → Secrets and
 # variables → Actions → Variables), so the schedule cannot hand the domain to an
 # account that is serving but not yet set up. A manual run always works.
 #
-# SECRETS: VERCEL_TOKEN_B, VERCEL_TOKEN_C, VERCEL_TOKEN_D (one token per account,
+# SECRETS: VERCEL_TOKEN_A, VERCEL_TOKEN_B, VERCEL_TOKEN_C, VERCEL_TOKEN_D (one token per account,
 # Account Settings → Tokens, no expiry).
 name: Vercel rotate
 
@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       to:
-        description: Move the domain now to (B, C, D) — auto = follow the schedule
+        description: Move the domain now to (A, B, C, D) — auto = follow the schedule
         default: auto
 
 permissions:
@@ -42,6 +42,7 @@ jobs:
       - run: node .github/scripts/vercel-rotate.mjs
         env:
           FORCE_TO: ${{ inputs.to }}
+          VERCEL_TOKEN_A: ${{ secrets.VERCEL_TOKEN_A }}
           VERCEL_TOKEN_B: ${{ secrets.VERCEL_TOKEN_B }}
           VERCEL_TOKEN_C: ${{ secrets.VERCEL_TOKEN_C }}
           VERCEL_TOKEN_D: ${{ secrets.VERCEL_TOKEN_D }}

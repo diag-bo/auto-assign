@@ -610,20 +610,22 @@ The **GitHub→Vercel integration auto-deploys `master` to production** within ~
 
 Production URL: **https://diag-logistics.vercel.app** — the one address every link,
 QR code, Zalo hook and cron job uses. It is a *movable* address that **rotates across
-three Vercel Hobby accounts**, ten days each (C `auto-assign` in team diag4 / `auto-assign-six.vercel.app`, D `auto-assign` in team diag-bo2 / `auto-assign-eta.vercel.app`, B `auto-assign` /
-`diag-bo.vercel.app`), so no account reaches its monthly CPU limit. The original
-account A (project `diag-logistics`) was retired 2026-11-05:
+four Vercel Hobby accounts**, about a week each (C `auto-assign` in team diag4 /
+`auto-assign-six.vercel.app`, D `auto-assign` in team diag-bo2 /
+`auto-assign-eta.vercel.app`, B `auto-assign` / `diag-bo.vercel.app`, A `diag-logistics`),
+so no account reaches its monthly CPU limit. A paused account's turn passes to the next
+healthy one. The repo lives at github.com/diag-bo/auto-assign (transferred 2026-11-07):
 
 - **`.github/workflows/vercel-rotate.yml`** runs hourly and moves the domain to the
   account whose turn it is (planned moves 00:00–04:59 VN), or off a paused account at
   once. Turns and project names: `ACCOUNTS` in `.github/scripts/vercel-accounts.mjs`.
-  Run it by hand with `to` = B/C/D for an emergency move. Tokens: GitHub secrets
-  `VERCEL_TOKEN_B/C/D`.
+  Run it by hand with `to` = A/B/C/D for an emergency move. Tokens: GitHub secrets
+  `VERCEL_TOKEN_A/B/C/D`. Off until the repo variable `VERCEL_ROTATE` is `on`.
 - **The engine follows the domain.** A cron ping that arrives on diag-logistics runs
   the engine; each account also gets a backup ping on its OWN address, which idles
   while the domain is being pinged and takes over when it is not (`primaryAlive`).
   No per-account setting — the three accounts carry identical environments.
-- **Environment variables are edited on ONE account (B) and copied** by
+- **Environment variables are edited on ONE account (C) and copied** by
   `.github/workflows/vercel-env-sync.yml`, which also redeploys. Vercel will not hand
   back values marked "sensitive", so those come from a GitHub secret of the same name.
 

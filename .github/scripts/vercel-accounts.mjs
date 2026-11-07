@@ -5,12 +5,13 @@
 
 export const DOMAIN = "diag-logistics.vercel.app";
 
-// Rotation order: days 1–10 of the month go to the first, 11–20 to the second,
-// 21–end to the third. Reorder to change who carries which ten days.
+// Rotation order: the month is cut into one turn per account, in this order (four
+// accounts: 1–8, 9–16, 17–24, 25–end). Reorder to change who carries which turn.
 export const ACCOUNTS = [
   { id: "C", project: "auto-assign" }, // team diag4 (auto-assign-six.vercel.app)
   { id: "D", project: "auto-assign" }, // team diag-bo2 (auto-assign-eta.vercel.app)
   { id: "B", project: "auto-assign" }, // team bologistics283-8297s-projects (diag-bo.vercel.app)
+  { id: "A", project: "diag-logistics" }, // team longnguyenthanh075-5963s-projects (paused till end of Nov 2026)
 ];
 
 const teams = {};

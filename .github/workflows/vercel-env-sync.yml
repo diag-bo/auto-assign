@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: Master copy account (B, C or D)
-        default: B
+        description: Master copy account (A, B, C or D)
+        default: C
       dry_run:
         description: Only report what would change
         type: boolean
@@ -39,6 +39,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           REDEPLOY: ${{ inputs.redeploy }}
           SECRETS_JSON: ${{ toJSON(secrets) }}
+          VERCEL_TOKEN_A: ${{ secrets.VERCEL_TOKEN_A }}
           VERCEL_TOKEN_B: ${{ secrets.VERCEL_TOKEN_B }}
           VERCEL_TOKEN_C: ${{ secrets.VERCEL_TOKEN_C }}
           VERCEL_TOKEN_D: ${{ secrets.VERCEL_TOKEN_D }}
