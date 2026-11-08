@@ -616,7 +616,7 @@ four Vercel Hobby accounts**, about a week each (C `auto-assign` in team diag4 /
 so no account reaches its monthly CPU limit. A paused account's turn passes to the next
 healthy one. The repo lives at github.com/diag-bo/auto-assign (transferred 2026-11-07):
 
-- **`.github/workflows/vercel-rotate.yml`** runs hourly and moves the domain to the
+- **`.github/workflows/vercel-rotate.yml`** runs every 5 minutes and moves the domain to the
   account whose turn it is (planned moves 00:00–04:59 VN), or off a paused account at
   once. Turns and project names: `ACCOUNTS` in `.github/scripts/vercel-accounts.mjs`.
   Run it by hand with `to` = A/B/C/D for an emergency move. Tokens: GitHub secrets

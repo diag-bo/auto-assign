@@ -2,8 +2,9 @@
 # moves it off an account Vercel has paused. Logic and account list:
 # .github/scripts/vercel-rotate.mjs and vercel-accounts.mjs.
 #
-# Hourly: GitHub's scheduler can run late, which only delays a move. Planned moves
-# happen 00:00–04:59 VN; a paused holder is moved on the first run that sees it.
+# Every 5 minutes (free: the repo is public), so a paused holder loses the domain
+# within minutes. GitHub's scheduler can run late, which only delays a move. Planned
+# moves happen 00:00–04:59 VN; a paused holder is moved on the first run that sees it.
 # Run by hand with "to" = A/B/C/D to move it now (the schedule takes it back to the
 # account whose turn it is the next night — reorder ACCOUNTS to change turns).
 #
@@ -17,7 +18,7 @@ name: Vercel rotate
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       to:
