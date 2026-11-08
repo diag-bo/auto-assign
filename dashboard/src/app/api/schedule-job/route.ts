@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Env } from "@/lib/cartrack";
 import { runScheduleJobCycle } from "@/lib/schedule-job";
 import { saveLastRun } from "@/lib/schedule-job-kv";
+import { getRedis } from "@/lib/tat-archive";
+import { vnDate } from "@/lib/time";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
@@ -27,6 +29,16 @@ export async function POST(req: NextRequest) {
     : fromVercelCron
       ? "cron"
       : "manual";
+
+  // Vercel Cron fires this on EVERY account the project is deployed to, all at
+  // 05:00, and the create path's "already exists?" check is not atomic — two at
+  // once can both create the same job. The first account in wins the day; the rest
+  // stop here. A winner that fails is re-run by morning-recovery (05:05+, locked).
+  if (fromVercelCron) {
+    const redis = getRedis();
+    const won = redis ? await redis.set(`schedule_job:cron:${env}:${vnDate()}`, "1", { nx: true, ex: 172_800 }).catch(() => "OK") : "OK";
+    if (won !== "OK") return NextResponse.json({ success: true, trigger, skipped: "already run today by another deployment" });
+  }
 
   // Data refresh piggybacks the existing cron-job.org dispatch run.
 
