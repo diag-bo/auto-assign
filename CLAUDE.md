@@ -627,20 +627,19 @@ fixed beat, so days held is runs done. The repo lives at github.com/diag-bo/auto
   the engine; each account also gets a backup ping on its OWN address, which idles
   while the domain is being pinged and takes over when it is not (`primaryAlive`).
   No per-account setting — the three accounts carry identical environments.
-- **Environment variables are edited on ONE account (B, the template) and copied** by
-  `.github/workflows/vercel-env-sync.yml`, which also redeploys. Vercel will not hand
-  back values marked "sensitive", so those come from a GitHub secret of the same name.
-  **A GitHub secret named `ENV_<KEY>` is `<KEY>` on every account (B included) and
-  beats B's copy** — the place for new settings, since it doesn't move when accounts
-  do; the prefix keeps other workflows' secrets out of the app.
-  Every run first asks each serving account what it is RUNNING (`/api/env-fingerprint`:
-  HMAC fingerprints keyed with `CRON_SECRET`, never values) and compares it with the
-  master copy — or, for a value nothing can read, with the first serving account. It
-  refuses to write while a sensitive key with no GitHub copy is MISSING on some account
-  (a sensitive key every account already has is left as each has it) or B runs a value
-  its GitHub secret disagrees with: on 2026-11-09 C and D served a valid but wrong
-  Labcenter receptionist login (the delivery-admin account), and every AO lookup 403'd.
-  A dry run goes red whenever anything needs doing.
+- **Environment variables live in GitHub, as repo secrets of the same name** — the one
+  copy that doesn't move when the accounts do. `.github/workflows/vercel-env-sync.yml`
+  writes every one to EVERY account (overwriting what each had) and redeploys; no
+  account is a template. Never edit a setting on one Vercel account: the next sync
+  overwrites it, and until then that account differs. Why: on 2026-11-09 D, rotated in
+  that morning, carried a valid but wrong Labcenter receptionist login (the
+  delivery-admin account) and every AO lookup 403'd. Workflow-only secrets
+  (`VERCEL_TOKEN_*`, `GOONG_API_KEY_2`) are excluded by name in the script.
+  The sync refuses to write while any account holds a setting GitHub doesn't (add it to
+  GitHub, or delete it from that account). Every run also asks each serving account
+  what it is RUNNING (`/api/env-fingerprint`: HMAC fingerprints keyed with
+  `CRON_SECRET`, never values) and lists every value that differs from GitHub's. A dry
+  run goes red whenever anything needs doing.
 
 Code that calls its own site uses `SELF_URL` (`lib/self-url.ts`), never a fixed host.
 
