@@ -9,7 +9,7 @@ on:
     inputs:
       source:
         description: Master copy account (A, B, C or D)
-        default: C
+        default: B
       dry_run:
         description: Only report what would change
         type: boolean
