@@ -20,7 +20,10 @@ const DRY = process.env.DRY_RUN === "true";
 const github = JSON.parse(process.env.SECRETS_JSON || "{}");
 
 // 1. The master copy.
-const wanted = Object.entries(github).filter(([k, v]) => !NOT_APP(k) && v !== "" && v != null).map(([key, value]) => ({ key, value }));
+// ENV_<NAME> is written as <NAME>: GitHub refuses secret names starting GITHUB_
+// (GITHUB_DISPATCH_TOKEN is stored as ENV_GITHUB_DISPATCH_TOKEN).
+const wanted = Object.entries(github).filter(([k, v]) => !NOT_APP(k) && v !== "" && v != null)
+  .map(([k, value]) => ({ key: k.startsWith("ENV_") ? k.slice(4) : k, value }));
 const keys = new Set(wanted.map((w) => w.key));
 console.log(`GitHub: ${wanted.length} app settings`);
 
