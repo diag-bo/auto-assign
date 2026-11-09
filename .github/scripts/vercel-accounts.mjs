@@ -5,8 +5,8 @@
 
 export const DOMAIN = "diag-logistics.vercel.app";
 
-// Rotation order: the month is cut into one turn per account, in this order (four
-// accounts: 1–8, 9–16, 17–24, 25–end). Reorder to change who carries which turn.
+// Rotation order: the domain passes round-robin in this order, skipping paused
+// accounts (turn length: TURN_MS in vercel-rotate.mjs).
 export const ACCOUNTS = [
   { id: "C", project: "auto-assign" }, // team diag4 (auto-assign-six.vercel.app)
   { id: "D", project: "auto-assign" }, // team diag-bo2 (auto-assign-eta.vercel.app)
@@ -40,9 +40,10 @@ export async function api(acct, method, path, body) {
   return call(token, method, `${path}${sep}teamId=${teams[acct.id]}`, body);
 }
 
-/** Does this account hold the domain, and is it serving? A paused account (over a
- *  plan limit) answers every request with an x-vercel-error header before any code
- *  runs, and so does a project with no production deployment yet. */
+/** Does this account hold the domain (and since when — the time it was added to
+ *  this project), and is it serving? A paused account (over a plan limit) answers
+ *  every request with an x-vercel-error header before any code runs, and so does a
+ *  project with no production deployment yet. */
 export async function inspect(acct) {
   const { domains } = await api(acct, "GET", `/v9/projects/${acct.project}/domains?limit=50`);
   const names = domains.map((d) => d.name);
@@ -52,5 +53,6 @@ export async function inspect(acct) {
     const res = await fetch(`https://${alias}/favicon.ico`, { redirect: "manual" }).catch(() => null);
     healthy = !!res && !res.headers.get("x-vercel-error");
   }
-  return { holds: names.includes(DOMAIN), alias, healthy };
+  const since = domains.find((d) => d.name === DOMAIN)?.createdAt ?? null;
+  return { holds: names.includes(DOMAIN), since, alias, healthy };
 }

@@ -610,15 +610,17 @@ The **GitHub→Vercel integration auto-deploys `master` to production** within ~
 
 Production URL: **https://diag-logistics.vercel.app** — the one address every link,
 QR code, Zalo hook and cron job uses. It is a *movable* address that **rotates across
-four Vercel Hobby accounts**, about a week each (C `auto-assign` in team diag4 /
+four Vercel Hobby accounts**, round-robin, 8 days each (C `auto-assign` in team diag4 /
 `auto-assign-six.vercel.app`, D `auto-assign` in team diag-bo2 /
 `auto-assign-eta.vercel.app`, B `auto-assign` / `diag-bo.vercel.app`, A `diag-logistics`),
-so no account reaches its monthly CPU limit. A paused account's turn passes to the next
-healthy one. The repo lives at github.com/diag-bo/auto-assign (transferred 2026-11-07):
+so no account reaches its monthly CPU limit. A turn is 8 days of HOLDING the domain
+(measured from when it was added to the project), not calendar dates, and a paused
+account is skipped — so the healthy ones share the load evenly. The engine runs on a
+fixed beat, so days held is runs done. The repo lives at github.com/diag-bo/auto-assign (transferred 2026-11-07):
 
 - **`.github/workflows/vercel-rotate.yml`** runs every 5 minutes and moves the domain to the
-  account whose turn it is (planned moves 00:00–04:59 VN), or off a paused account at
-  once. Turns and project names: `ACCOUNTS` in `.github/scripts/vercel-accounts.mjs`.
+  next healthy account once the holder's turn is up (planned moves 00:00–04:59 VN), or
+  off a paused account at once. Order and project names: `ACCOUNTS` in `.github/scripts/vercel-accounts.mjs`.
   Run it by hand with `to` = A/B/C/D for an emergency move. Tokens: GitHub secrets
   `VERCEL_TOKEN_A/B/C/D`. Off until the repo variable `VERCEL_ROTATE` is `on`.
 - **The engine follows the domain.** A cron ping that arrives on diag-logistics runs

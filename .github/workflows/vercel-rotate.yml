@@ -1,12 +1,12 @@
-# Rotates diag-logistics.vercel.app across the Vercel accounts, about a week each, and
-# moves it off an account Vercel has paused. Logic and account list:
+# Rotates diag-logistics.vercel.app round-robin across the healthy Vercel accounts,
+# 8 days of holding it each, and moves it off an account Vercel has paused. Logic and account list:
 # .github/scripts/vercel-rotate.mjs and vercel-accounts.mjs.
 #
 # Every 5 minutes (free: the repo is public), so a paused holder loses the domain
 # within minutes. GitHub's scheduler can run late, which only delays a move. Planned
 # moves happen 00:00–04:59 VN; a paused holder is moved on the first run that sees it.
-# Run by hand with "to" = A/B/C/D to move it now (the schedule takes it back to the
-# account whose turn it is the next night — reorder ACCOUNTS to change turns).
+# Run by hand with "to" = A/B/C/D to move it now; that starts a fresh turn there
+# (reorder ACCOUNTS to change the order).
 #
 # OFF until the repository variable VERCEL_ROTATE is "on" (Settings → Secrets and
 # variables → Actions → Variables), so the schedule cannot hand the domain to an

@@ -1,24 +1,24 @@
-// Moves diag-logistics.vercel.app to the account whose turn it is, and off a paused
-// account straight away. Run hourly by .github/workflows/vercel-rotate.yml; every run
-// works out the whole answer again, so a missed or late run costs nothing.
+// Moves diag-logistics.vercel.app round-robin across the healthy accounts: each holds
+// it for one turn, then it passes to the next healthy account in order; a paused
+// account is skipped and moved off straight away. Run every 5 minutes by
+// .github/workflows/vercel-rotate.yml; every run works the whole answer out again
+// from the domain itself, so a missed or late run costs nothing.
 import { ACCOUNTS, DOMAIN, api, inspect } from "./vercel-accounts.mjs";
 
-/** Pure decision. ids in rotation order; holder = id or null; healthy = Set of ids.
- *  Returns the id to move to, or null to stay. The month is cut into one turn per
- *  account (4 accounts: 1–8, 9–16, 17–24, 25–end). A paused account's turn passes to
- *  the next healthy one in order — not to the holder, which would then carry two
- *  turns running and pause too. */
-export function plan({ ids, holder, healthy, day, hour, force }) {
+// One turn = 8 days of holding the domain. The engine runs on a fixed beat (every
+// 3 minutes, 05:00–22:00), so days held IS runs done — the share is equal without
+// counting anything. The 6 h slack keeps the hand-over inside the night window.
+export const TURN_MS = 8 * 86_400_000 - 6 * 3_600_000;
+
+/** Pure decision. ids in rotation order; holder = id or null; healthy = Set of ids;
+ *  heldMs = how long the holder has had the domain. Returns the id to move to, or
+ *  null to stay. */
+export function plan({ ids, holder, healthy, heldMs, hour, force }) {
   if (force) return healthy.has(force) && force !== holder ? force : null;
-  const slot = Math.min(ids.length - 1, Math.floor((day - 1) / Math.ceil(31 / ids.length)));
-  let target = null;
-  for (let i = 0; i < ids.length && !target; i++) {
-    const id = ids[(slot + i) % ids.length];
-    if (healthy.has(id)) target = id;
-  }
-  if (!target || target === holder) return null;
-  if (!holder || !healthy.has(holder)) return target; // holder down: move now
-  return hour < 5 ? target : null; // planned moves only 00:00–04:59 VN, engine asleep
+  const h = ids.indexOf(holder);
+  const next = [...ids.slice(h + 1), ...ids.slice(0, h + 1)].find((id) => id !== holder && healthy.has(id)) ?? null;
+  if (!holder || !healthy.has(holder)) return next; // holder down: move now
+  return hour < 5 && heldMs >= TURN_MS ? next : null; // turn over only 00:00–04:59 VN, engine asleep
 }
 
 async function main() {
@@ -31,9 +31,12 @@ async function main() {
   }
   const holder = ACCOUNTS.find((a) => state[a.id].holds)?.id ?? null;
   const healthy = new Set(ACCOUNTS.filter((a) => state[a.id].healthy).map((a) => a.id));
+  const heldMs = holder ? Date.now() - state[holder].since : 0;
+  if (holder && !state[holder].since) console.log(`::warning::no start time for ${holder}'s hold — planned turns cannot advance`);
+  else if (holder) console.log(`${holder} has held ${DOMAIN} ${(heldMs / 86_400_000).toFixed(1)} days (turn: ${(TURN_MS / 86_400_000).toFixed(2)})`);
   const to = plan({
-    ids: ACCOUNTS.map((a) => a.id), holder, healthy,
-    day: vn.getUTCDate(), hour: vn.getUTCHours(), force: force === "AUTO" ? "" : force,
+    ids: ACCOUNTS.map((a) => a.id), holder, healthy, heldMs,
+    hour: vn.getUTCHours(), force: force === "AUTO" ? "" : force,
   });
   if (!to) return console.log(`stay: ${DOMAIN} on ${holder ?? "nobody"}`);
 
