@@ -630,12 +630,17 @@ fixed beat, so days held is runs done. The repo lives at github.com/diag-bo/auto
 - **Environment variables are edited on ONE account (B, the template) and copied** by
   `.github/workflows/vercel-env-sync.yml`, which also redeploys. Vercel will not hand
   back values marked "sensitive", so those come from a GitHub secret of the same name.
+  **A GitHub secret named `ENV_<KEY>` is `<KEY>` on every account (B included) and
+  beats B's copy** — the place for new settings, since it doesn't move when accounts
+  do; the prefix keeps other workflows' secrets out of the app.
   Every run first asks each serving account what it is RUNNING (`/api/env-fingerprint`:
-  HMAC fingerprints keyed with `CRON_SECRET`, never values) and compares it with B. It
-  lists sensitive keys with no GitHub secret and secrets B itself disagrees with
-  (stale), and refuses to write while either list is non-empty: on 2026-11-09 C and D
-  served a valid but wrong Labcenter receptionist login (the delivery-admin account),
-  and every AO lookup 403'd. A dry run goes red whenever anything needs doing.
+  HMAC fingerprints keyed with `CRON_SECRET`, never values) and compares it with the
+  master copy — or, for a value nothing can read, with the first serving account. It
+  refuses to write while a sensitive key with no GitHub copy is MISSING on some account
+  (a sensitive key every account already has is left as each has it) or B runs a value
+  its GitHub secret disagrees with: on 2026-11-09 C and D served a valid but wrong
+  Labcenter receptionist login (the delivery-admin account), and every AO lookup 403'd.
+  A dry run goes red whenever anything needs doing.
 
 Code that calls its own site uses `SELF_URL` (`lib/self-url.ts`), never a fixed host.
 
