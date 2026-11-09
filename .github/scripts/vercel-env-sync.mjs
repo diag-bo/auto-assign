@@ -44,7 +44,9 @@ const sensitive = new Set(envs.filter((e) => e.type === "sensitive").map((e) => 
 const drift = [];
 let staleSecrets = [];
 if (!cron) console.log("RUNNING CHECK SKIPPED: CRON_SECRET is sensitive on the source and has no GitHub secret");
-else for (const acct of ACCOUNTS) {
+// Source first: for a key with no master value (sensitive, no GitHub secret) the
+// others are compared with what the SOURCE runs.
+else for (const acct of [source, ...ACCOUNTS.filter((a) => a !== source)]) {
   const { alias, healthy } = await inspect(acct).catch(() => ({ healthy: false }));
   if (!healthy) { console.log(`${acct.id}: not serving, not checked`); continue; }
   const res = await fetch(`https://${alias}/api/env-fingerprint?keys=${prodKeys.join(",")}`, { headers: { Authorization: `Bearer ${cron}` } }).catch(() => null);
@@ -56,7 +58,10 @@ else for (const acct of ACCOUNTS) {
   if (off.length) drift.push(acct.id);
   // The source running a sensitive value its GitHub secret doesn't match = the secret
   // is stale, and copying it would spread the wrong value to every account.
-  if (acct === source) staleSecrets = off.filter((k) => sensitive.has(k) && expected.has(k));
+  if (acct === source) {
+    staleSecrets = off.filter((k) => sensitive.has(k) && expected.has(k));
+    for (const k of prodKeys) if (!expected.has(k) && fingerprints[k]) expected.set(k, fingerprints[k]);
+  }
 }
 
 if (missing.length) {
