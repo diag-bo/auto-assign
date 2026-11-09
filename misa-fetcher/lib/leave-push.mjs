@@ -261,13 +261,27 @@ export function buildLeaveSubmissions(
  *
  * `dryRun` reports exactly what would be written without touching the sheet.
  */
-export async function pushLeave(submissions, { dryRun = false, baseUrl } = {}) {
+export async function pushLeave(submissions, { dryRun = false, baseUrl, onFile } = {}) {
   // Inside Vercel (the morning sync) post to the account doing the work: the other
   // one may be paused (2026-10-31). The GitHub Action has no such variable.
   const own = process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   const base = (baseUrl || process.env.DASHBOARD_URL || own || DEFAULT_BASE).replace(/\/$/, "");
   const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
   const result = { written: 0, duplicate: 0, suppressed: 0, failed: 0, aborted: false, errors: [] };
+
+  // Days already on file never leave this process. Every run re-derives every
+  // charged day from today on, so without this nearly every POST is answered
+  // 409 — ~200 calls a morning, each re-reading the whole leave list. `onFile`
+  // (given by the in-Vercel sync) builds the same duplicate check the route
+  // runs, from ONE read; anything it is unsure of is still posted and the route
+  // decides, so a skipped day is only ever one the route would have refused.
+  const isOnFile = onFile ? await onFile().catch(() => null) : null;
+  if (isOnFile) {
+    const before = submissions.length;
+    submissions = submissions.filter((s) => !isOnFile(s));
+    result.duplicate += before - submissions.length;
+    log(`${before - submissions.length} day(s) already on file, ${submissions.length} to post`);
+  }
 
   if (dryRun) {
     log(`DRY RUN — ${submissions.length} leave day(s) would be submitted to ${base}/api/nghi-phep:`);

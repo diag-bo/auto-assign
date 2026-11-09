@@ -15,7 +15,7 @@ import {
 import { buildGrid } from "./grid.mjs";
 import { buildLeaveSubmissions, pushLeave } from "./leave-push.mjs";
 
-export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],statePath,outDir,writeDump=true}={}) {
+export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],statePath,outDir,writeDump=true,leaveOnFile}={}) {
   const args=new Set(flags),DRY_RUN=args.has("--dry-run");
   const STATE_PATH=statePath,OUT_DIR=outDir;
   if (!creds?.username || !creds.password || !creds.totpSecret) {
@@ -219,7 +219,7 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
     if (ptRows) console.log(`[run] leave: ${ptRows} dòng nghỉ PT kèm theo`);
     let leaveResult = null;
     if (!args.has("--no-leave") && submissions.length) {
-      leaveResult = await pushLeave(submissions, { dryRun: DRY_RUN || args.has("--leave-dry") });
+      leaveResult = await pushLeave(submissions, { dryRun: DRY_RUN || args.has("--leave-dry"), onFile: leaveOnFile });
       if (!DRY_RUN && !args.has("--leave-dry")) {
         console.log(
           `[run] leave push: ${leaveResult.written} written, ${leaveResult.duplicate} already present, ` +

@@ -8,9 +8,27 @@ const CHROMIUM_PACK = "https://github.com/Sparticuz/chromium/releases/download/v
 import { chromium } from "playwright-core";
 import { authenticator } from "otplib";
 import { runMisaSync } from "../../../misa-fetcher/lib/run.mjs";
+import { findLeaveConflict, loadLeaveEntriesStrict } from "./leave-config";
+
+type LeaveSub = { driver_id: string; driver_name: string; loai_nghi: string; ngay_bat_dau: string;
+  ngay_ket_thuc: string | null; gio_bat_dau: string | null; gio_ket_thuc: string | null };
+
+/** "Is this day already on file?" — the duplicate check /api/nghi-phep runs, from
+ *  one fresh read, so the push only POSTs days that are new. Same candidate the
+ *  route builds; a read failure throws and the pusher posts everything as before. */
+async function leaveOnFile() {
+  const { entries, invalid } = await loadLeaveEntriesStrict();
+  return (s: LeaveSub) => !!findLeaveConflict({
+    driver_id: s.driver_id, driver_name: s.driver_name,
+    loai_nghi: s.loai_nghi === "nua_buoi" ? "Nghỉ nửa buổi" : "Nghỉ nguyên buổi",
+    leave_from: s.ngay_bat_dau, leave_to: s.ngay_ket_thuc ?? s.ngay_bat_dau,
+    gio_bat_dau: s.loai_nghi === "nua_buoi" ? s.gio_bat_dau : null,
+    gio_ket_thuc: s.loai_nghi === "nua_buoi" ? s.gio_ket_thuc : null, subs: [],
+  }, entries, invalid);
+}
 
 const run = async (months: string[]) => runMisaSync({month:months[0],flags:[`--months=${months.length}`],chromium,
-  writeDump:false,statePath:"/tmp/misa-session.json",
+  writeDump:false,leaveOnFile,statePath:"/tmp/misa-session.json",
   launchOptions:{args:serverChromium.args,executablePath:await serverChromium.executablePath(CHROMIUM_PACK)},
   creds:{username:process.env.MISA_USERNAME,password:process.env.MISA_PASSWORD,totpSecret:process.env.MISA_TOTP_SECRET,
     generateTotp:()=>authenticator.generate(process.env.MISA_TOTP_SECRET!)}});

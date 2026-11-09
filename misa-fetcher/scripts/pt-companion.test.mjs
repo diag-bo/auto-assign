@@ -27,6 +27,7 @@ import {
   findPtTwin,
   buildPtCompanion,
   buildLeaveSubmissions,
+  pushLeave,
 } from "../lib/leave-push.mjs";
 
 let failures = 0;
@@ -201,6 +202,13 @@ const ambiguous = buildLeaveSubmissions(thaoOff, new Map([["DC101225", THAO_FT]]
 eq("an ambiguous twin adds no row", ambiguous.submissions.filter((s) => s.pt_companion).length, 0);
 eq("…only the full-time row is written", ambiguous.submissions.length, 1);
 eq("…and the person is named for a human to look at", [...ambiguous.ptUnresolved.keys()], ["DC101225"]);
+
+// Days already on file are not posted (dry run: nothing is sent either way).
+const two = [{ date: "2026-09-04", driver_name: "a" }, { date: "2026-09-05", driver_name: "b" }];
+const skipped = await pushLeave(two, { dryRun: true, onFile: async () => (s) => s.date === "2026-09-04" });
+eq("a day already on file is counted, not posted", skipped.duplicate, 1);
+const blind = await pushLeave(two, { dryRun: true, onFile: async () => { throw new Error("unreadable"); } });
+eq("an unreadable list skips nothing", blind.duplicate, 0);
 
 console.log(failures === 0 ? "\nAll PT-companion checks passed" : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);
