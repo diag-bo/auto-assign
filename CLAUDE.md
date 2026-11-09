@@ -630,6 +630,12 @@ fixed beat, so days held is runs done. The repo lives at github.com/diag-bo/auto
 - **Environment variables are edited on ONE account (C) and copied** by
   `.github/workflows/vercel-env-sync.yml`, which also redeploys. Vercel will not hand
   back values marked "sensitive", so those come from a GitHub secret of the same name.
+  Every run first asks each serving account what it is RUNNING (`/api/env-fingerprint`:
+  HMAC fingerprints keyed with `CRON_SECRET`, never values) and compares it with C. It
+  lists sensitive keys with no GitHub secret and secrets C itself disagrees with
+  (stale), and refuses to write while either list is non-empty: on 2026-11-09 C and D
+  served a valid but wrong Labcenter receptionist login (the delivery-admin account),
+  and every AO lookup 403'd. A dry run goes red whenever anything needs doing.
 
 Code that calls its own site uses `SELF_URL` (`lib/self-url.ts`), never a fixed host.
 
