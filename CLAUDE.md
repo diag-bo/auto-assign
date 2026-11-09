@@ -641,6 +641,30 @@ because GitHub's own `schedule:` trigger is best-effort and was observed firing
 ~85 minutes late. Keep the schedule in exactly one place (cron-job.org) or the
 report goes out twice; do not re-add `schedule:` to the workflow file.
 
+### Vercel CPU budget — the trace
+
+Each Hobby account allows 4 h of Active CPU a month, and the rotation above spreads
+the load. **Before trimming anything, check this list; after trimming, add a dated
+line to it** — the same question ("hasn't this been done?") keeps coming back.
+Measure in the holder's project → Observability → Vercel Functions → sort by
+Active CPU (the API cannot read CPU on Hobby).
+
+Measured 2026-11-09, 05:00–09:30 on D: engine 90 runs = 39 s (~0.43 s a run);
+leave sync 209 calls = 17 s; /api/location-jobs 303 calls = 13 s; bookings 10 s;
+morning sync 8 s. A weekday is ~8–10 min, so an 8-day turn is ~1–1.5 h.
+
+Already done — do not redo:
+- Dashboard status poll (90 s) stops while the tab is hidden and resumes on return.
+- /qr and /psc-tinh have NO polling timer: the list loads on open and on returning
+  to the tab, at most once a minute (`MIN_REFRESH_MS`). /psc-tinh's 60 s timer only
+  moves a local clock — no request. The /qr page shell is static (CDN), so a scan
+  costs no function call. Remaining /api/location-jobs calls are real opens.
+- Engine and /api/drivers read drivers from the RPC live list, not REST (2026-11-06).
+- Lịch cố định's Vercel Cron fires on every account; a once-a-day Redis lock lets
+  only the first create jobs (2026-11-09).
+- MISA leave sync posts only days not already on file — one read, the route's own
+  duplicate rule (`onFile` in `leave-push.mjs`), was ~209 POSTs a morning (2026-11-09).
+
 ## Config rule fields
 
 Removed from the code 2026-10-31; see "Where the data lives". Master rules still
