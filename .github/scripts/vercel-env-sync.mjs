@@ -6,14 +6,13 @@
 // wrong Labcenter receptionist login and every AO lookup 403'd. So every secret here
 // is written, by its own name, to every account, overwriting what each one had.
 //
-// It refuses to write while any account holds a setting GitHub doesn't — the set is
-// incomplete, and a rotated-in account would keep its own value for it. Add it to
-// GitHub, or delete it from that account if nothing uses it. Values are never printed.
+// A setting GitHub doesn't hold is left as each account has it, and listed. Put one in
+// GitHub when it is wrong somewhere, or must not drift. Values are never printed.
 import { createHmac } from "node:crypto";
 import { ACCOUNTS, api, inspect } from "./vercel-accounts.mjs";
 
 // GitHub secrets that belong to the workflows, not the app.
-const NOT_APP = (k) => /^VERCEL_TOKEN_/.test(k) || k === "GOONG_API_KEY_2" || k === "github_token";
+const NOT_APP = (k) => /^(VERCEL_TOKEN_|SHEET_WEBAPP_)/.test(k) || k === "GOONG_API_KEY_2" || k === "github_token";
 // Account settings that are not the app's: Vercel's own, and retired per-account switches.
 const NOT_SYNCED = (k) => k.startsWith("VERCEL_") || k === "STANDBY" || k === "DEPLOY_ID";
 const DRY = process.env.DRY_RUN === "true";
@@ -55,9 +54,8 @@ else for (const acct of ACCOUNTS) {
 }
 
 if (notInGithub.size) {
-  console.log(`\nNOT IN GITHUB — add each as a secret of the same name (Settings → Secrets and variables → Actions), or delete it from the account if nothing uses it:`);
+  console.log(`\nNot in GitHub, left as each account has it (${notInGithub.size}):`);
   for (const [k, ids] of notInGithub) console.log(`  ${k}   (on ${ids.join(", ")})`);
-  if (!DRY) { console.log("\nNothing written: the GitHub copy is incomplete."); process.exit(1); }
 }
 
 // 4. Write every account: update the existing entry, create where it has none.
@@ -88,4 +86,4 @@ if (!DRY && process.env.REDEPLOY !== "false") {
   }
 }
 // A dry run goes red when anything needs doing, so the run list shows it.
-if (failed || (DRY && (notInGithub.size || drift))) process.exit(1);
+if (failed || (DRY && drift)) process.exit(1);
