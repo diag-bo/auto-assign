@@ -6,8 +6,9 @@
 // wrong Labcenter receptionist login and every AO lookup 403'd. So every secret here
 // is written, by its own name, to every account, overwriting what each one had.
 //
-// A setting GitHub doesn't hold is left as each account has it, and listed. Put one in
-// GitHub when it is wrong somewhere, or must not drift. Values are never printed.
+// GitHub is meant to hold EVERY app setting. One it doesn't hold yet is left as each
+// account has it and listed, and the dry run goes red until it is added (or deleted
+// from the account, if nothing uses it). Values are never printed.
 import { createHmac } from "node:crypto";
 import { ACCOUNTS, api, inspect } from "./vercel-accounts.mjs";
 
@@ -86,4 +87,4 @@ if (!DRY && process.env.REDEPLOY !== "false") {
   }
 }
 // A dry run goes red when anything needs doing, so the run list shows it.
-if (failed || (DRY && drift)) process.exit(1);
+if (failed || (DRY && (notInGithub.size || drift))) process.exit(1);

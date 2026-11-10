@@ -635,9 +635,8 @@ fixed beat, so days held is runs done. The repo lives at github.com/diag-bo/auto
   that morning, carried a valid but wrong Labcenter receptionist login (the
   delivery-admin account) and every AO lookup 403'd. Workflow-only secrets
   (`VERCEL_TOKEN_*`, `SHEET_WEBAPP_*`, `GOONG_API_KEY_2`) are excluded by name in the
-  script. A setting GitHub doesn't hold is left as each account has it and listed —
-  GitHub holds what has to be pinned (2026-11-10: the receptionist login, plus
-  `CRON_SECRET` for the running check), not everything. Every run also asks each serving account
+  script. GitHub holds EVERY app setting; one it doesn't hold yet is left as each
+  account has it, listed, and turns the dry run red. Every run also asks each serving account
   what it is RUNNING (`/api/env-fingerprint`: HMAC fingerprints keyed with
   `CRON_SECRET`, never values) and lists every value that differs from GitHub's. A dry
   run goes red whenever anything needs doing.
