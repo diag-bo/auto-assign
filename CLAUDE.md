@@ -52,7 +52,7 @@ LABCENTER_PASSWORD=              # Labcenter API password
 LABCENTER_RECEPTIONIST_EMAIL=    # Separate receptionist account for /api/labcenter/client (client search in sales form)
 LABCENTER_RECEPTIONIST_PASSWORD= # Password for receptionist account
 LABCENTER_WEBHOOK_SECRET=        # Bearer secret Labcenter sends to /api/labcenter/failed-jobs (closed while unset)
-SMART_RECHECK=                   # Smart re-check (lib/smart-recheck.ts): unset = log-only ("RECHECK" lines + 14-day list smart:recheck:log:<env>:<date>), "live" = moves jobs, "off" = disabled
+SMART_RECHECK=                   # Smart re-check (lib/smart-recheck.ts): unset = LIVE, moves jobs on its own ("RECHECK chuyển" lines + 14-day list smart:recheck:log:<env>:<date>, no supervisor step); "log" = log-only, "off" = disabled
 ```
 
 ### Where the data lives

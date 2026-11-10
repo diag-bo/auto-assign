@@ -11,7 +11,7 @@
  *
  *   npx tsx scripts/smart-recheck.test.mts
  */
-import { isRecheckable, moveGain, RECHECK_MIN_AGE_MIN, RECHECK_MIN_GAIN_MIN } from "../src/lib/smart-recheck";
+import { isRecheckable, moveGain, recheckMode, RECHECK_MIN_AGE_MIN, RECHECK_MIN_GAIN_MIN } from "../src/lib/smart-recheck";
 import { selectReferenceStop, openTasks, withoutFullDrivers, MAX_OPEN_TASKS } from "../src/lib/smart-rank";
 import type { Job, TimelineStop } from "../src/lib/types";
 
@@ -91,6 +91,15 @@ const r2 = withoutFullDrivers(["A", "C"], (x) => load[x]);
 ok("everyone full → everyone stays, best of them still wins", r2.pool.join() === "A,C" && r2.allFull);
 const r3 = withoutFullDrivers(["A", "C"], (x) => load[x], (x) => x === "A");
 ok("re-check: the holder stays even at 3, nobody full can take it", r3.pool.join() === "A" && !r3.allFull);
+
+console.log("Mode");
+const modeFor = (v?: string) => {
+  if (v === undefined) delete process.env.SMART_RECHECK; else process.env.SMART_RECHECK = v;
+  return recheckMode();
+};
+ok("no setting → live: it moves jobs with nobody asked", modeFor() === "live");
+ok('"log" → says what it would move, moves nothing', modeFor("log") === "log");
+ok('"off" → does nothing', modeFor("off") === "off");
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

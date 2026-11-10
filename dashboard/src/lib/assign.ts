@@ -2268,12 +2268,21 @@ async function recheckSmartJobs(
       continue;
     }
     const winnerId = winner.d.delivery_driver_id;
+    // The pool was built before this cycle's moves: a driver who has just been
+    // handed other jobs here may be at the limit by now.
+    if ((prep.openTaskCount.get(winnerId) ?? 0) >= MAX_OPEN_TASKS) continue;
     const r = await assignJob(winnerId, jobId, env, p.pool.driverById.get(winnerId));
     if (r.status === 200) {
       log(`Job ${jobId} - RECHECK chuyển: ${detail} | ${route}`, "OK");
       await logRecheck(env, today, `${vnTimestamp()} job ${jobId} moved: ${detail} | ${route}`);
       await recordSmartAssign(env, today, jobId, winnerId);
+      prep.openTaskCount.set(winnerId, (prep.openTaskCount.get(winnerId) ?? 0) + 1);
+      prep.openTaskCount.set(p.holderId, Math.max(0, (prep.openTaskCount.get(p.holderId) ?? 0) - 1));
       await kqvt.afterAssign(p.job, winnerId);
+    } else if (isDriverUnavailable(r.body) || isDriverDeactivated(r.body)) {
+      // On a break or switched off: the job simply stays where it is. Nothing to
+      // report — it is looked at again in 10 minutes.
+      await recordSmartAssign(env, today, jobId, p.holderId);
     } else {
       log(`Job ${jobId} - RECHECK failed: ${friendlyError(r.body)} | ${route}`, "WARN");
       await recordSmartAssign(env, today, jobId, p.holderId); // not retried every cycle

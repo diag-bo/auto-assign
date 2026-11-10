@@ -20,8 +20,14 @@
  *    otherwise they are anchored on its own pickup and can never lose it.
  *  - The KQ/VT holder keeps the job: the ranking already puts them first.
  *
- * SMART_RECHECK: unset = log-only (says what it WOULD move, moves nothing),
- * "live" = moves, "off" = does nothing.
+ * It moves jobs on its own and asks nobody: each move is a line in the run log
+ * and the 14-day list, never a row for a supervisor to act on (supervisor,
+ * 2026-11-10). Replayed on job 34526718 that day: assigned 08:39, its driver then
+ * held 78 minutes at a hospital, collected 11:08 — the re-check moves it at 09:24
+ * to a driver who was free two minutes away.
+ *
+ * SMART_RECHECK: unset = live (moves jobs), "log" = says what it WOULD move and
+ * moves nothing, "off" = does nothing.
  */
 import type { Job } from "./types";
 import { sharedRedis } from "./redis";
@@ -30,7 +36,7 @@ export type RecheckMode = "off" | "log" | "live";
 
 export function recheckMode(): RecheckMode {
   const v = (process.env.SMART_RECHECK ?? "").trim().toLowerCase();
-  return v === "off" || v === "live" ? v : "log";
+  return v === "off" || v === "log" ? v : "live";
 }
 
 export const RECHECK_MIN_AGE_MIN = 10;
