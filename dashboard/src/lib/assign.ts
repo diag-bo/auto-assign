@@ -740,30 +740,26 @@ export async function alertLateJobs(
   }
 }
 
-// ── Samples on board: late to the drop-off, or a driver gone quiet ──────────────
+// ── Samples on board: a driver gone quiet ────────────────────────────────────────
 //
-// Two questions about the SAME on-board samples, answered on two different clocks,
-// because they serve two different people:
+// The question is whether a driver holding samples has stopped moving. Starting
+// that clock at the pickup is wrong: 60% of jobs are batched (three clinics, then
+// the lab), so the first sample of a batch is legitimately on board for an hour
+// while the driver works the whole time. So it starts at the driver's LAST stop,
+// and what it offers is their unstarted pickups — samples already on board cannot
+// change hands.
 //
-//   - The CUSTOMER cares how long THEIR sample has been in the car, whatever else
-//     the driver was doing — so that clock starts at their own pickup.
-//   - LOAD BALANCING cares whether the driver has stopped moving. Starting that
-//     clock at the pickup is wrong: 60% of jobs are batched (three clinics, then
-//     the lab), so the first sample of a batch is legitimately on board for an
-//     hour while the driver works the whole time. So it starts at the driver's
-//     LAST stop, and what it offers is their unstarted pickups — samples already
-//     on board cannot change hands.
+// The second alert this used to carry — one sample on board too long since ITS OWN
+// pickup ("Mẫu chưa về điểm giao", ≈17 a day) — was removed (supervisor, 2026-11-11).
 //
-// Each limit is the larger of a floor and twice the ride's TAT target, but never
+// The limit is the larger of a floor and twice the ride's TAT target, but never
 // more than an hour past the target: the floor alone is wrong for provincial
 // rides, twice the target alone is 16 minutes on a 1 km ride, and on long rides
 // drivers BEAT the 4 min/km target (median 0.73× of it at 60–119 min, 0.47× past
 // 120), so 2× would sit four hours on a 30 km ride nine in ten finish in two. Priced on 30 days of pay_jobs (2026-10-13, 18,100 jobs), measuring to
 // drop-off COMPLETION (arrival is a few minutes earlier, so live is a touch quieter):
-//   customer, from pickup, max(90, 2× target)    ≈ 17 a day
 //   driver, from last stop, max(60, 2× target)   ≈ 5 a day
 //   (from pickup with the 60 floor it was ≈ 32 a day, ~30 of them batches)
-const ONBOARD_LATE_FLOOR_MIN = 90;
 const STALL_FLOOR_MIN = 60;
 const ONBOARD_MAX_SLACK_MIN = 60;
 /** Drivers this alert never reports on (supervisor, 2026-10-14). Hand-kept by
@@ -776,10 +772,9 @@ export interface OnboardAlert {
   driver_name: string | null;
   /** Every sample on board, for pricing their rides. */
   onboard_job_ids: number[];
-  /** Set only when the driver has gone quiet past their limit. */
+  /** The driver's last tap — set on every alert returned. */
   quiet_since_ms: number | null;
-  late: { job_id: number; pickup_name: string | null; dropoff_name: string | null; picked_ms: number }[];
-  /** Unstarted pickups that could go to another driver — filled only when quiet. */
+  /** Unstarted pickups that could go to another driver. */
   pending: { job_id: number; pickup_name: string | null }[];
 }
 
@@ -819,7 +814,7 @@ export function computeOnboardAlerts(
       const name = job.driver
         ? `${job.driver.first_name ?? ""} ${job.driver.last_name ?? ""}`.trim() || null
         : null;
-      d = { driver_id: driverId, driver_name: name, onboard_job_ids: [], quiet_since_ms: null, late: [], pending: [], lastActiveMs: 0 };
+      d = { driver_id: driverId, driver_name: name, onboard_job_ids: [], quiet_since_ms: null, pending: [], lastActiveMs: 0 };
       byDriver.set(driverId, d);
     }
     if (ONBOARD_IGNORED_CODES.has(staffCode(d.driver_name))) continue;
@@ -846,9 +841,6 @@ export function computeOnboardAlerts(
     if (dropoff.activity_arrived_ts || dropoff.activity_completed_ts
         || isCompletedOrRejectedStop(dropoff.stop_status_id ?? 0)) continue;
     d.onboard_job_ids.push(job.job_id);
-    if (nowMs - picked >= limitMin(job.job_id, ONBOARD_LATE_FLOOR_MIN) * 60_000) {
-      d.late.push({ job_id: job.job_id, pickup_name: pickup.customer_name ?? null, dropoff_name: dropoff.customer_name ?? null, picked_ms: picked });
-    }
   }
 
   const out: OnboardAlert[] = [];
@@ -856,10 +848,9 @@ export function computeOnboardAlerts(
     if (d.onboard_job_ids.length === 0) continue;
     // The LONGEST ride on board sets the limit: they may be driving exactly that one.
     const stallMin = Math.max(...d.onboard_job_ids.map((id) => limitMin(id, STALL_FLOOR_MIN)));
-    const quiet = lastActiveMs > 0 && nowMs - lastActiveMs >= stallMin * 60_000;
-    if (quiet) d.quiet_since_ms = lastActiveMs;
-    else d.pending = [];
-    if (quiet || d.late.length > 0) out.push(d);
+    if (!(lastActiveMs > 0 && nowMs - lastActiveMs >= stallMin * 60_000)) continue;
+    d.quiet_since_ms = lastActiveMs;
+    out.push(d);
   }
   return out;
 }
@@ -903,9 +894,8 @@ export async function checkOnboardSamples(
 }
 
 /**
- * One supervisor message per driver, carrying only what has not been said before:
- * each late sample once (its customer is told once), and a quiet spell once —
- * keyed on the last tap, so the same driver going quiet again later is news.
+ * One supervisor message per quiet spell — keyed on the last tap, so the same
+ * driver going quiet again later is news.
  */
 async function alertOnboard(
   alerts: OnboardAlert[],
@@ -929,31 +919,22 @@ async function alertOnboard(
   const link = (jobId: number) => `https://fleetweb-vn.cartrack.com/delivery/map?job=${jobId}`;
 
   for (const a of alerts) {
-    const late = [];
-    for (const l of a.late) if (await claimLateAlert(l.job_id, "prod", 86400, "onboard")) late.push(l);
-    const quiet = a.quiet_since_ms != null
-      && await claimLateAlert(Math.min(...a.onboard_job_ids), "prod", 86400, `stall${a.quiet_since_ms}`);
-    if (!quiet && late.length === 0) continue;
+    if (a.quiet_since_ms == null
+      || !(await claimLateAlert(Math.min(...a.onboard_job_ids), "prod", 86400, `stall${a.quiet_since_ms}`))) continue;
 
     const driver = a.driver_name ? stripDriverCode(a.driver_name) : "chưa rõ tên";
     // Bold headline, then who — the supervisor's layout (2026-10-14).
-    const lines: string[] = quiet
-      ? [`⏸️ **Không có điểm dừng mới ~${dur(now - a.quiet_since_ms!)} (từ ${hhmm(a.quiet_since_ms!)})**`,
-         `GNM ${driver} · đang giữ ${a.onboard_job_ids.length} mẫu`]
-      : ["🕒 **Mẫu chưa về điểm giao**", `GNM ${driver}`];
-    if (late.length) {
-      lines.push("Mẫu trễ, cần báo khách:");
-      for (const l of late) {
-        lines.push(`• ${place(l.pickup_name)} → ${place(l.dropoff_name)} · lấy lúc ${hhmm(l.picked_ms)} (~${dur(now - l.picked_ms)})`, link(l.job_id));
-      }
-    }
-    if (quiet && a.pending.length) {
+    const lines: string[] = [
+      `⏸️ **Không có điểm dừng mới ~${dur(now - a.quiet_since_ms)} (từ ${hhmm(a.quiet_since_ms)})**`,
+      `GNM ${driver} · đang giữ ${a.onboard_job_ids.length} mẫu`,
+    ];
+    if (a.pending.length) {
       lines.push("Chuyến chưa lấy, nên chuyển tài xế khác:");
       for (const p of a.pending) lines.push(`• ${place(p.pickup_name)}`, link(p.job_id));
     }
     const sent = await sendZaloMessage(botToken, chatId, lines.join("\n"), "markdown");
     log(
-      `Onboard alert ${sent ? "sent" : "failed"} for ${driver}: ${late.length} late, ${quiet ? `quiet since ${hhmm(a.quiet_since_ms!)}, ${a.pending.length} pending` : "not quiet"}`,
+      `Onboard alert ${sent ? "sent" : "failed"} for ${driver}: quiet since ${hhmm(a.quiet_since_ms)}, ${a.pending.length} pending`,
       sent ? "INFO" : "WARN",
     );
   }

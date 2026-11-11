@@ -1,10 +1,10 @@
 /**
- * Samples on board: the customer clock (from THEIR pickup) and the driver clock
- * (from the driver's LAST tap) — see computeOnboardAlerts.
+ * Samples on board: the driver clock (from the driver's LAST tap) — see
+ * computeOnboardAlerts.
  *
  * The case worth pinning is the batch: a driver collecting at three clinics has
- * the first sample on board for a long time while working the whole time. The
- * customer may still need a call; the driver must NOT read as stalled.
+ * the first sample on board for a long time while working the whole time, and
+ * must NOT read as stalled. A sample long on board is, by itself, no alert.
  *
  *   npx tsx scripts/onboard-alert.test.mts
  */
@@ -36,12 +36,10 @@ const job = (driver: string, picked: string | null, opts: { arrived?: string; st
 });
 
 // 1. Batched driver: first pickup 09:00, still collecting (last tap 10:30). At 10:35
-//    the 09:00 sample is 95 min on board → customer-late, but the driver is busy.
+//    the 09:00 sample is 95 min on board, but the driver is busy → nothing.
 {
   const jobs = [job("A", "09:00"), job("A", "10:00"), job("A", "10:30")];
-  const [a] = computeOnboardAlerts(jobs, today, now("10:35"));
-  check("batch: first sample is customer-late", a?.late.length === 1 && a.late[0].job_id === jobs[0].job_id);
-  check("batch: driver is not quiet", a?.quiet_since_ms === null);
+  check("batch: long on board but working is no alert", computeOnboardAlerts(jobs, today, now("10:35")).length === 0);
 }
 
 // 2. Driver quiet: one sample on board since 10:00, nothing since. Quiet at 11:00
@@ -53,7 +51,6 @@ const job = (driver: string, picked: string | null, opts: { arrived?: string; st
   const [b] = computeOnboardAlerts(jobs, today, now("11:00"));
   check("quiet: flagged at 60 min", b?.quiet_since_ms === now("10:00"));
   check("quiet: unstarted pickup offered", b?.pending.length === 1 && b.pending[0].job_id === jobs[1].job_id);
-  check("quiet: sample not yet customer-late (90 floor)", b?.late.length === 0);
 }
 
 // 3. Long ride: 40 km → target 160. Twice that would be 320 min; the cap holds it
@@ -65,7 +62,7 @@ const job = (driver: string, picked: string | null, opts: { arrived?: string; st
   check("long ride: quiet at 2h with distance", computeOnboardAlerts(jobs, today, now("10:00"), km).length === 0);
   check("long ride: nothing at 11:39", computeOnboardAlerts(jobs, today, now("11:39"), km).length === 0);
   const [c] = computeOnboardAlerts(jobs, today, now("11:40"), km);
-  check("long ride: capped at target + 60, not 2×", c?.late.length === 1 && c.quiet_since_ms === now("08:00"));
+  check("long ride: capped at target + 60, not 2×", c?.quiet_since_ms === now("08:00"));
   check("long ride: superset pass flags it without distance", computeOnboardAlerts(jobs, today, now("10:00")).length === 1);
 }
 
@@ -83,7 +80,7 @@ const job = (driver: string, picked: string | null, opts: { arrived?: string; st
   const done = job("F", "10:50", { arrived: "11:10", status: 5 });
   const jobs = [job("F", "10:00"), done];
   const [f] = computeOnboardAlerts(jobs, today, now("11:30"));
-  check("completed job's tap counts as activity", f === undefined || f.quiet_since_ms === null);
+  check("completed job's tap counts as activity", f === undefined);
 }
 
 // 6. Ignored staff codes never alert, however late.
