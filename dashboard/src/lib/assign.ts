@@ -39,6 +39,7 @@ import { selectReferenceStop, computeStopStats, rankingComparator, ROUTE_STATE_P
 import { loadLeaveEntries, isDriverOnLeave, resolveSubstitute, type LeaveEntry } from "./leave-config";
 import { publishNoDriverRoutes } from "./psc-no-driver";
 import { getDriversOnDuty, resolveFixedDriver, findSmartMapping } from "./fixed-driver";
+import { sbSelect } from "./supabase-rest";
 import { recheckMode, isRecheckable, moveGain, recordSmartAssign, readSmartAssigns, logRecheck } from "./smart-recheck";
 
 
@@ -59,12 +60,16 @@ const CLOSING_EXEMPT_LABELS = [PSC_TINH_LABEL, PSC_OUTBOUND_LABEL, PSC_VIA_LABEL
 // measured from scheduled_delivery_ts for ASAP pickups.
 // The dashboard "Cần xử lý" panel surfaces everything past this mark.
 const PICKUP_OVERDUE_MIN = 90;
-// Windowed pickups warn and notify five minutes after the window ends.
+// Windowed pickups show on the dashboard five minutes after the window ends.
 const WINDOW_LATE_MIN = 5;
-// Higher escalation mark: once a pickup is this many minutes past its expected
-// start and STILL unstarted, a one-time Zalo alert is pushed to the supervisor
-// group (see alertLateJobs). Windowed pickups use WINDOW_LATE_MIN instead.
-const LATE_ALERT_MIN = 120;
+// The Zalo alarm (supervisor, 2026-11-11): the driver has not ARRIVED at the pickup
+// this long after the time the client was promised — booking time + the client's
+// portal ETA for an ASAP pickup, the window's START for a windowed one. Separate
+// from the dashboard marks above; see computeLateAlerts.
+const ARRIVE_GRACE_MIN = 30;
+// A client with no portal ETA on file (~6% of clients) counts as this many minutes
+// (supervisor, 2026-11-11).
+const DEFAULT_ETA_MIN = 60;
 // Hour after which the Zalo escalation stops for the day. The dashboard warning is
 // NOT affected — a supervisor still looking at the screen should still see the row;
 // this only stops the push that reaches a phone.
@@ -472,7 +477,7 @@ export function isStaleWindow(
  * offset from the job's scheduled date, so a job dated today with an 08:00 window
  * reads as "due at 08:00 this morning" no matter when it was actually booked.
  * A booking taken at 19:48 for an 08:00–09:05 slot is therefore born ~12 hours
- * overdue: it clears PICKUP_OVERDUE_MIN and LATE_ALERT_MIN on the very first
+ * overdue: it clears the dashboard mark and the Zalo alarm's on the very first
  * cycle that sees it, and the supervisor gets a "trễ ~11h54" ping seconds after
  * the client booked. Field case: job 34421121, booked 18/08 19:48, alerted the
  * same evening; the overnight rollover then re-dated it to the 19th and it was
@@ -487,11 +492,11 @@ export function isStaleWindow(
  * that fails to resolve is KEPT: a missed suppression is a noisy alert, a wrong
  * one is a pickup nobody is told about.
  */
-async function dropStaleWindowWarnings(
-  warnings: PickupWarning[],
+async function dropStaleWindowWarnings<T extends { job_id: number; window_time_from?: string }>(
+  warnings: T[],
   today: string,
   env: Env,
-): Promise<PickupWarning[]> {
+): Promise<T[]> {
   const suspects = warnings.filter(
     (w) => w.window_time_from,
   );
@@ -538,15 +543,126 @@ async function dropStaleWindowWarnings(
   return warnings.filter((w) => !stale.has(w.job_id));
 }
 
+/** One pickup the Zalo alarm is due for. */
+export interface LateAlert {
+  job_id: number;
+  pickup_customer_name: string | null;
+  driver_name: string | null;
+  /** Minutes past the promised time (ETA / window start), or past booking when
+   *  the client has no ETA. */
+  minutes_late: number;
+  /** What the minutes are measured against, as the alert shows it. */
+  ref: string;
+  /** Set on windowed pickups — what dropStaleWindowWarnings keys on. */
+  window_time_from?: string;
+}
+
+/** Open client pickups the driver has not reached yet — plan jobs, engine legs and
+ *  Diag-location pickups left out, exactly as the dashboard warning leaves them out. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function unarrivedPickups(dayJobs: any[]): { job: any; pickup: any }[] {
+  const out = [];
+  for (const job of dayJobs) {
+    if (!job.delivery_driver_id || job.job_status_id !== 4 || isInternalOrPlanJob(job)) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pickup = ((job.stops ?? []) as any[]).find((s: any) => s.stop_type_id === 1);
+    if (!pickup || pickup.activity_arrived_ts || pickup.activity_completed_ts) continue;
+    if (isCompletedOrRejectedStop(pickup.stop_status_id ?? 0)) continue;
+    out.push({ job, pickup });
+  }
+  return out;
+}
+
+const hhmmOfMs = (ms: number) =>
+  new Date(ms).toLocaleTimeString("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" });
+
 /**
- * Push a one-time Zalo alert to the supervisor group for any pickup that is now
- * LATE_ALERT_MIN (2 hours) past its expected start, or WINDOW_LATE_MIN past its
- * window end, and still hasn't been picked up. Uses the admin group bot
+ * The Zalo alarm rule. Pure. A pickup is due when the driver has still not ARRIVED
+ * ARRIVE_GRACE_MIN after the promise:
+ *   - windowed: the window's START (not its end, which is the dashboard's mark);
+ *   - ASAP: booking time + the client's portal ETA (`etaMins`, by pickup customer id).
+ *     No ETA on file → DEFAULT_ETA_MIN. `etaMins` null (the ETA read
+ *     failed) → ASAP pickups are left for the next cycle rather than guessed at.
+ * A driver on the way counts as not arrived, and being busy elsewhere defers nothing:
+ * the promise was made to the client, whatever the driver is doing. Both clocks are
+ * floored at PICKUP_CLOCK_START, like the dashboard's.
+ */
+export function computeLateAlerts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dayJobs: any[],
+  today: string,
+  etaMins: Record<string, number> | null,
+  now: number = Date.now(),
+): LateAlert[] {
+  const clockStartMs = parseVnTimestamp(`${today} ${PICKUP_CLOCK_START}`).getTime();
+  const out: LateAlert[] = [];
+  for (const { job, pickup } of unarrivedPickups(dayJobs)) {
+    const window = pickup.delivery_windows?.[0];
+    let promisedMs: number;
+    let ref: string;
+    if (window) {
+      const start = window.time_from ? parsePickupWindowTime(window.time_from, today) : null;
+      if (!start || isNaN(start.getTime())) continue;
+      promisedMs = Math.max(start.getTime(), clockStartMs);
+      const to = window.time_to ? `–${window.time_to.slice(0, 5)}` : "";
+      ref = start.getTime() < clockStartMs
+        ? `tính từ ${CLOCK_START_HHMM}`
+        : `khung giờ ${window.time_from.slice(0, 5)}${to}`;
+    } else {
+      if (!etaMins) continue;
+      const booked = parseVnTimestamp(job.scheduled_delivery_ts).getTime();
+      if (isNaN(booked)) continue;
+      const anchor = Math.max(booked, clockStartMs);
+      promisedMs = anchor + (etaMins[pickup.customer_id] || DEFAULT_ETA_MIN) * 60_000;
+      ref = `ETA ${hhmmOfMs(promisedMs)}`;
+    }
+    if (now - promisedMs < ARRIVE_GRACE_MIN * 60_000) continue;
+    const d = job.driver;
+    out.push({
+      job_id: job.job_id,
+      pickup_customer_name: pickup.customer_name ?? null,
+      driver_name: d ? `${d.first_name ?? ""} ${d.last_name ?? ""}`.trim() || null : null,
+      minutes_late: Math.floor((now - promisedMs) / 60_000),
+      ref,
+      ...(window ? { window_time_from: window.time_from } : {}),
+    });
+  }
+  return out;
+}
+
+// Portal ETA per pickup client (master, minutes from booking). One small Supabase
+// read for the ids not asked in the last hour; null = on file with no ETA.
+const ETA_TTL_MS = 60 * 60_000;
+const etaCache = new Map<string, { mins: number | null; at: number }>();
+async function pickupEtaMins(ids: string[]): Promise<Record<string, number>> {
+  const now = Date.now();
+  // Ids go into the query string, so only well-formed ones are asked for.
+  const need = [...new Set(ids)].filter(
+    (id) => /^[0-9a-f-]{36}$/i.test(id) && !(now - (etaCache.get(id)?.at ?? 0) < ETA_TTL_MS),
+  );
+  if (need.length) {
+    const rows = await sbSelect<{ customer_id: string; eta_minutes: number | null }>(
+      "master_clients_read",
+      `select=customer_id,eta_minutes&customer_id=in.(${need.join(",")})`,
+    );
+    for (const id of need) etaCache.set(id, { mins: null, at: now });
+    for (const r of rows) etaCache.set(r.customer_id, { mins: r.eta_minutes, at: now });
+  }
+  const out: Record<string, number> = {};
+  for (const id of ids) {
+    const mins = etaCache.get(id)?.mins;
+    if (mins) out[id] = mins;
+  }
+  return out;
+}
+
+/**
+ * Push a one-time Zalo alert to the supervisor group for every pickup
+ * computeLateAlerts finds due — see the rule there. Uses the admin group bot
  * (ZALO_ADMIN_BOT_TOKEN / ZALO_ADMIN_CHAT_ID — see /api/nghi-phep).
  *
- * Reuses the already-computed overdue warnings, so every suppression there
- * (internal/plan/Diag-location jobs excluded) applies to the alert too. ASAP
- * pickups also retain the busy-driver and recent-completion suppressions.
+ * `dayJobs` is the cycle's own open + completed list; nothing is fetched from
+ * Cartrack here except a stale-window check on a windowed pickup already due.
  *
  * "Once per job" is enforced by an NX Redis claim (claimLateAlert, 24h TTL): the
  * first cycle to see a job cross the mark sends and claims; later cycles skip it,
@@ -554,7 +670,9 @@ async function dropStaleWindowWarnings(
  * spam the real supervisor group.
  */
 export async function alertLateJobs(
-  warnings: PickupWarning[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dayJobs: any[],
+  today: string,
   env: Env,
   log: (msg: string, level?: LogLevel) => void,
 ): Promise<void> {
@@ -569,11 +687,21 @@ export async function alertLateJobs(
   const chatId = process.env.ZALO_ADMIN_CHAT_ID;
   if (!botToken || !chatId) return;
 
-  for (const w of warnings) {
-    if (w.reason !== "overdue") continue;
-    const isWindow = !!w.window_time_from;
-    const elapsedMin = (w.minutes_late ?? 0) + (isWindow ? WINDOW_LATE_MIN : PICKUP_OVERDUE_MIN);
-    if (elapsedMin < (isWindow ? WINDOW_LATE_MIN : LATE_ALERT_MIN)) continue;
+  // Only ASAP pickups old enough to possibly be due need an ETA looked up.
+  const asapIds = unarrivedPickups(dayJobs)
+    .filter(({ job, pickup }) => !pickup.delivery_windows?.length && pickup.customer_id
+      && Date.now() - parseVnTimestamp(job.scheduled_delivery_ts).getTime() >= ARRIVE_GRACE_MIN * 60_000)
+    .map(({ pickup }) => pickup.customer_id as string);
+  const etaMins = asapIds.length
+    ? await pickupEtaMins(asapIds).catch((e) => {
+        log(`Late-alert ETA read failed, ASAP pickups wait for the next cycle: ${e}`, "WARN");
+        return null;
+      })
+    : {};
+  const due = await dropStaleWindowWarnings(computeLateAlerts(dayJobs, today, etaMins), today, env);
+
+  for (const w of due) {
+    const elapsedMin = w.minutes_late;
 
     // Claim before sending: guarantees a single ping even if two cycles overlap.
     // A transient send failure forfeits this job's alert (it still shows on the
@@ -591,23 +719,9 @@ export async function alertLateJobs(
     const m = elapsedMin % 60;
     const dur = h ? `${h}h${m ? String(m).padStart(2, "0") : ""}` : `${m} phút`;
     // Reference time rides in the header parenthetical rather than its own line, so
-    // the supervisor sees the lateness AND what it's measured against in one glance:
-    // a delivery window ("khung giờ") for windowed pickups, else the job's creation
-    // time ("tạo lúc"). Window times are raw "HH:mm:ss+07:00" — slice HH:mm off the
-    // front (hhmmVn needs a date prefix these lack).
-    const win5 = (s?: string) => (s ? s.slice(0, 5) : null);
-    let ref: string | null = null;
-    if (w.clock_from) {
-      // Clock was floored to the start of the working day — say so, rather than
-      // naming a window or creation time the elapsed figure is NOT measured from.
-      ref = `tính từ ${w.clock_from}`;
-    } else if (w.window_time_from) {
-      const to = win5(w.window_time_to);
-      ref = `khung giờ ${win5(w.window_time_from)}${to ? `–${to}` : ""}`;
-    } else if (w.create_ts) {
-      const created = hhmmVn(w.create_ts);
-      if (created) ref = `tạo lúc ${created}`;
-    }
+    // the supervisor sees the lateness AND what it's measured against in one glance
+    // (the window, the ETA, or the booking time — built in computeLateAlerts).
+    const ref = w.ref;
     // The job id goes out as the fleetweb deep link only — same URL the dashboard
     // job chips use. Zalo auto-links a bare URL, so no parse_mode is needed, and
     // the supervisor taps straight through instead of copying the id into a search.
@@ -2717,7 +2831,7 @@ export async function autoAssignCycle(
         // same shape: a pickup crossing its alert threshold during a quiet spell would wait
         // for unrelated work before anyone was told. claimLateAlert still makes it
         // once-per-job, and isLateAlertHour keeps it out of the night.
-        alertLateJobs(quietWarnings, env, log).catch((e) =>
+        alertLateJobs([...(assignedJobsToday ?? []), ...(cycleS5 ?? [])], today, env, log).catch((e) =>
           log(`Late-alert push failed: ${e}`, "WARN"),
         ),
         // Same lists, other end of the ride: samples collected but not yet at the
@@ -3540,7 +3654,7 @@ export async function autoAssignCycle(
       }),
       // Piggyback a one-time supervisor Zalo alert on the same overdue set for the
       // overdue pickups. Never throws the cycle: fire-and-log.
-      alertLateJobs(pickupWarnings, env, log).catch((e) =>
+      alertLateJobs([...(assignedJobsToday ?? []), ...(cycleS5 ?? [])], today, env, log).catch((e) =>
         log(`Late-alert push failed: ${e}`, "WARN"),
       ),
       // Same lists, other end of the ride: samples collected but not yet at the
