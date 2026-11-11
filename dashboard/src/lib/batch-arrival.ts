@@ -13,8 +13,7 @@
  *
  * Today's timeline only covers today, so a row Cartrack confirmed is carried
  * forward until Labcenter completes it — an evening delivery must not vanish at
- * midnight. Batches with no Cartrack match (delivered before this existed, or
- * carried without a tracking number) appear once transferred for over a day.
+ * midnight. A batch with no Cartrack D001 drop-off is never listed.
  */
 import { receptionistFetch } from "./labcenter";
 import { getBatchArrivals, setCycleSnapshot } from "./smart-log-kv";
@@ -23,7 +22,6 @@ import { isD001 } from "./unmapped-row";
 import type { Job } from "./types";
 
 export const GRACE_MS = 30 * 60_000;
-export const LIS_ONLY_MS = 24 * 60 * 60_000;
 const CHECK_EVERY_MS = 10 * 60_000;
 const LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 const BATCH_RE = /^B\d{15}$/;
@@ -44,8 +42,8 @@ export interface StuckBatch {
   /** Labcenter status right now: "created" or "transferred". */
   status: string;
   samples: number | null;
-  /** Cartrack D001 drop-off completion, VN "YYYY-MM-DD HH:MM:SS"; null = Labcenter-only row. */
-  delivered_at: string | null;
+  /** Cartrack D001 drop-off completion, VN "YYYY-MM-DD HH:MM:SS". */
+  delivered_at: string;
   /** Labcenter transfer time, ISO UTC. */
   transferred_at: string | null;
   job_id: number | null;
@@ -73,24 +71,20 @@ export function deliveriesAtD001(jobs: Job[]): Map<string, Delivery> {
 
 export function findStuckBatches(jobs: Job[], open: LisBatch[], previous: StuckBatch[], now: number): StuckBatch[] {
   const delivered = deliveriesAtD001(jobs);
-  const carried = new Map(previous.filter((p) => p.delivered_at).map((p) => [p.code, p as Delivery]));
+  const carried = new Map(previous.map((p) => [p.code, p as Delivery]));
   const rows: StuckBatch[] = [];
   for (const b of open) {
     if (b.destination_location !== "001" || !BATCH_RE.test(b.batch_code)) continue;
     if (b.status !== "created" && b.status !== "transferred") continue;
     const d = delivered.get(b.batch_code) ?? carried.get(b.batch_code);
-    const transferred = b.transferred_at ? Date.parse(b.transferred_at) : NaN;
-    if (d) {
-      if (now - parseVnTimestamp(d.delivered_at).getTime() < GRACE_MS) continue;
-    } else if (!(now - transferred >= LIS_ONLY_MS)) continue;
+    if (!d || now - parseVnTimestamp(d.delivered_at).getTime() < GRACE_MS) continue;
     rows.push({
       code: b.batch_code, branch: `D${b.source_location ?? b.batch_code.slice(1, 4)}`, status: b.status,
-      samples: b.total_sample ?? null, delivered_at: d?.delivered_at ?? null,
-      transferred_at: b.transferred_at ?? null, job_id: d?.job_id ?? null, driver: d?.driver ?? null,
+      samples: b.total_sample ?? null, delivered_at: d.delivered_at,
+      transferred_at: b.transferred_at ?? null, job_id: d.job_id, driver: d.driver,
     });
   }
-  const since = (r: StuckBatch) => r.delivered_at ? parseVnTimestamp(r.delivered_at).getTime() : Date.parse(r.transferred_at ?? "");
-  return rows.sort((a, b) => since(a) - since(b));
+  return rows.sort((a, b) => a.delivered_at.localeCompare(b.delivered_at));
 }
 
 /** Not-yet-received batches over the lookback window; null when Labcenter did not answer. */

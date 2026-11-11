@@ -23,10 +23,9 @@ const rows = findStuckBatches(
    job(4, [E], "2026-11-11 09:00:00", "x")], // delivered somewhere else
   [lis(A), lis(B), lis(C), lis(E), lis(D, "transferred", "2026-11-01T04:16:00Z"), lis("B038261111090000", "completed")],
   [], now);
-assert.deepEqual(rows.map((r) => r.code), [D, A], "oldest first; grace, undelivered, elsewhere and completed are left out");
-assert.equal(rows[1].job_id, 1);
-assert.equal(rows[1].branch, "D038");
-assert.equal(rows[0].delivered_at, null, "Labcenter-only row after a day");
+assert.deepEqual(rows.map((r) => r.code), [A], "grace, undelivered, elsewhere, completed and no-Cartrack-trip are left out");
+assert.equal(rows[0].job_id, 1);
+assert.equal(rows[0].branch, "D038");
 
 // Yesterday's delivery is gone from today's timeline but stays listed while Labcenter still has it open.
 const carried = findStuckBatches([], [lis(A)], rows, now + 86_400_000);

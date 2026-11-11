@@ -102,18 +102,14 @@ function fmtLate(m: number): string {
   return mm ? `+${h}h${mm}'` : `+${h}h`;
 }
 
-/** An ISO stamp as VN wall-clock HH:mm — the form every other time on this tab is
- *  in, so the header's "tính đến" reads against the rows' own reference times. */
-function ddmmVn(iso: string): string {
-  return new Date(iso).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", timeZone: "Asia/Ho_Chi_Minh" });
-}
-
 /** "45 phút trước" / "5 giờ trước" / "3 ngày trước". */
 function ago(iso: string): string {
   const min = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
   return min < 60 ? `${min} phút trước` : min < 48 * 60 ? `${Math.floor(min / 60)} giờ trước` : `${Math.floor(min / 1440)} ngày trước`;
 }
 
+/** An ISO stamp as VN wall-clock HH:mm — the form every other time on this tab is
+ *  in, so the header's "tính đến" reads against the rows' own reference times. */
 function hhmmVn(iso: string): string {
   return new Date(iso).toLocaleTimeString("vi-VN", {
     hour: "2-digit", minute: "2-digit", timeZone: "Asia/Ho_Chi_Minh",
@@ -709,9 +705,7 @@ export function FailedJobsPanel({
                         {onOpenJob && b.job_id != null && <OpenInAdminButton jobId={b.job_id} onOpen={onOpenJob} />}
                       </div>
                       <div className="mt-0.5 text-slate-500">
-                        {b.delivered_at
-                          ? <>Giao D001 lúc {b.delivered_at.slice(11, 16)} {b.delivered_at.slice(8, 10)}/{b.delivered_at.slice(5, 7)}{b.driver ? ` · ${b.driver}` : ""} · {ago(b.delivered_at.replace(" ", "T") + "+07:00")}</>
-                          : <>Không thấy chuyến Cartrack · chuyển lúc {b.transferred_at ? `${hhmmVn(b.transferred_at)} ${ddmmVn(b.transferred_at)} · ${ago(b.transferred_at)}` : "?"}</>}
+                        Giao D001 lúc {b.delivered_at.slice(11, 16)} {b.delivered_at.slice(8, 10)}/{b.delivered_at.slice(5, 7)}{b.driver ? ` · ${b.driver}` : ""} · {ago(b.delivered_at.replace(" ", "T") + "+07:00")}
                       </div>
                     </div>
                   ))}
