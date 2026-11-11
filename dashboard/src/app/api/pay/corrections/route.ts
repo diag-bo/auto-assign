@@ -6,6 +6,8 @@
  *                         check-in/out taps, the first pickup and last dropoff, the
  *                         hours the rule computes, and the hours requested.
  *   POST {action:"approve"|"reject", id, note}
+ *        {action:"approve", id, in_time, out_time, note}   approve a different
+ *                         window than asked (partial approval)
  *        {action:"create", driver_id, date, in_time, out_time, note}
  *                         a supervisor's own correction — approved at once.
  *        {action:"suspect_ok"|"suspect_cut"|"suspect_undo", driver_id, date, in_time?, out_time?, note}
@@ -34,6 +36,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 export const preferredRegion = "sin1";
 
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const timeFmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hour12: false });
 const hhmm = (iso: string | null | undefined) => (iso ? timeFmt.format(new Date(iso)) : null);
@@ -123,11 +126,31 @@ export async function POST(req: NextRequest) {
       if (body.action === "reject" && !note.trim()) {
         return NextResponse.json({ ok: false, error: "Ghi lý do từ chối để tài xế biết." }, { status: 400 });
       }
+      // A PARTIAL approval: the supervisor pays a narrower (or different) window
+      // than was asked. The approved window replaces in_time/out_time — that is
+      // what the hours rule reads — and the window the driver asked for is kept
+      // in the decision note, which the driver also sees.
+      const patch: Record<string, string> = {
+        status: body.action === "approve" ? "approved" : "rejected", decision_note: note, decided_at: now,
+      };
+      if (body.action === "approve" && (body.in_time != null || body.out_time != null)) {
+        const inT = String(body.in_time ?? ""), outT = String(body.out_time ?? "");
+        if (!HHMM.test(inT) || !HHMM.test(outT) || outT <= inT) {
+          return NextResponse.json({ ok: false, error: "Giờ duyệt không hợp lệ — giờ ra phải sau giờ vào." }, { status: 400 });
+        }
+        const [cur] = await sbSelectAll<{ in_time: string; out_time: string }>("pay_day_corrections", `select=in_time,out_time&id=eq.${id}&status=eq.pending`, "id.asc");
+        if (!cur) return NextResponse.json({ ok: false, error: "Yêu cầu đã được xử lý hoặc đã được thay thế — tải lại." }, { status: 409 });
+        const asked = `${cur.in_time.slice(0, 5)}–${cur.out_time.slice(0, 5)}`;
+        if (`${inT}–${outT}` !== asked) {
+          Object.assign(patch, {
+            in_time: inT, out_time: outT,
+            decision_note: `Duyệt ${inT}–${outT} (đề nghị ${asked})${note.trim() ? ` — ${note.trim()}` : ""}`.slice(0, 500),
+          });
+        }
+      }
       // Only a PENDING request can be decided — a stale screen gets a refusal,
       // not a second decision on top of the first.
-      const rows = await sbPatch("pay_day_corrections", `id=eq.${id}&status=eq.pending`, {
-        status: body.action === "approve" ? "approved" : "rejected", decision_note: note, decided_at: now,
-      });
+      const rows = await sbPatch("pay_day_corrections", `id=eq.${id}&status=eq.pending`, patch);
       if (rows.length === 0) return NextResponse.json({ ok: false, error: "Yêu cầu đã được xử lý hoặc đã được thay thế — tải lại." }, { status: 409 });
       return NextResponse.json({ ok: true });
     }

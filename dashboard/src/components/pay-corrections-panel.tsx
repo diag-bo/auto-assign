@@ -146,10 +146,14 @@ function Proof({ url, n }: { url: string; n: number }) {
 
 function RequestRow({ r, busy, onDecide }: {
   r: Correction; busy: boolean;
-  onDecide: (action: "approve" | "reject", note?: string) => Promise<boolean>;
+  onDecide: (action: "approve" | "reject", note?: string, window?: { in_time: string; out_time: string }) => Promise<boolean>;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [why, setWhy] = useState("");
+  // Partial approval: pay only part of what was asked.
+  const [partial, setPartial] = useState(false);
+  const [win, setWin] = useState({ in_time: r.in_time, out_time: r.out_time });
+  const winMins = win.in_time && win.out_time ? toMin(win.out_time)! - toMin(win.in_time)! : 0;
   const e = r.evidence;
   const delta = r.requested_mins - e.rule_mins;
   const first = toMin(e.first_stop), last = toMin(e.last_stop);
@@ -214,8 +218,44 @@ function RequestRow({ r, busy, onDecide }: {
               <button type="submit" disabled={busy || !why.trim()} className="text-xs font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg px-4 min-h-11 disabled:opacity-50">Từ chối</button>
             </div>
           </form>
+        ) : partial ? (
+          <form className="flex flex-col gap-2 w-full lg:w-72"
+            onSubmit={async (ev) => { ev.preventDefault(); if (await onDecide("approve", why, win)) setPartial(false); }}>
+            <p className="text-xs font-semibold text-slate-800">Duyệt khoảng giờ</p>
+            <div className="flex gap-2">
+              <label className="flex-1 text-xs text-slate-700">Từ
+                <input type="time" required value={win.in_time} onChange={(ev) => setWin({ ...win, in_time: ev.target.value })}
+                  className="mt-1 w-full border border-slate-300 rounded-lg px-2 min-h-11 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+              </label>
+              <label className="flex-1 text-xs text-slate-700">Đến
+                <input type="time" required value={win.out_time} onChange={(ev) => setWin({ ...win, out_time: ev.target.value })}
+                  className="mt-1 w-full border border-slate-300 rounded-lg px-2 min-h-11 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+              </label>
+            </div>
+            <p className="text-xs tabular-nums text-slate-700">
+              {winMins > 0
+                ? <>Tính <b className="text-slate-900">{fmtH(winMins)}</b> · {winMins - e.rule_mins >= 0 ? "+" : "−"}{fmtH(winMins - e.rule_mins)} so với đang tính</>
+                : <span className="text-rose-800">Giờ ra phải sau giờ vào.</span>}
+            </p>
+            <label className="text-xs text-slate-700">
+              Ghi chú <span className="text-slate-500">(tài xế sẽ thấy, không bắt buộc)</span>
+              <input value={why} onChange={(ev) => setWhy(ev.target.value)}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-2.5 min-h-11 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+            </label>
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={() => setPartial(false)} className="text-xs font-semibold text-slate-700 rounded-lg px-3 min-h-11 hover:bg-slate-100">Huỷ</button>
+              <button type="submit" disabled={busy || winMins <= 0}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg px-4 min-h-11 disabled:opacity-50">
+                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Duyệt {win.in_time}–{win.out_time}
+              </button>
+            </div>
+          </form>
         ) : (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 justify-end">
+            <button onClick={() => { setPartial(true); setWhy(""); setWin({ in_time: r.in_time, out_time: r.out_time }); }}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 border border-slate-300 hover:bg-slate-50 rounded-lg px-3 min-h-11">
+              Duyệt một phần
+            </button>
             <button onClick={() => { setRejecting(true); setWhy(""); }}
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-800 border border-rose-200 hover:bg-rose-50 rounded-lg px-3 min-h-11">
               <X className="size-3.5" /> Từ chối
@@ -372,7 +412,7 @@ export function PayCorrectionsPanel({
           <ul className="divide-y divide-slate-200">
             {shown.map((r) => (
               <RequestRow key={r.id} r={r} busy={busyId === r.id}
-                onDecide={(action, note) => post({ action, id: r.id, note }, r.id)} />
+                onDecide={(action, note, win) => post({ action, id: r.id, note, ...win }, r.id)} />
             ))}
           </ul>
         )}
