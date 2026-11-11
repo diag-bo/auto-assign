@@ -12,7 +12,7 @@ const today = "2026-10-03";
 const originalDate = Date;
 const originalFetch = globalThis.fetch;
 const at = (hhmmss: string) => new originalDate(`${today}T${hhmmss}+07:00`).getTime();
-let now = at("09:30:00");
+let now = at("10:00:00");
 // Both Date.now() and new Date() must use the same clock (quiet-hours guard).
 globalThis.Date = class extends originalDate {
   constructor(value: string | number = now) { super(value); }
@@ -58,14 +58,14 @@ globalThis.fetch = async (input, init) => {
 const alert = (jobs: Job[], env: "prod" | "uat" = "prod") => alertLateJobs(jobs, today, env, () => {});
 
 try {
-  // ── Windowed: 30 minutes after the window STARTS ──
+  // ── Windowed: 30 minutes after the window ENDS ──
   now -= 1_000;
-  assert.deepEqual(computeLateAlerts([job], today, {}), [], "09:29:59 is inside the grace");
+  assert.deepEqual(computeLateAlerts([job], today, {}), [], "09:59:59 is inside the grace");
   await alert([job]);
   assert.equal(messages.length, 0);
   now += 1_000;
   const due = computeLateAlerts([job], today, {});
-  assert.equal(due.length, 1, "09:30 is exactly thirty minutes after the window start");
+  assert.equal(due.length, 1, "10:00 is exactly thirty minutes after the window end");
   assert.equal(due[0].minutes_late, 30);
   await alert([job], "uat");
   assert.equal(claims.size, 0, "UAT cannot consume a production claim");
@@ -77,7 +77,7 @@ try {
 
   // ── The test is ARRIVAL: on the way is still late, arrived is not ──
   assert.equal(computeLateAlerts([withPickup({ activity_started_ts: `${today} 09:20:00` })], today, {}).length, 1);
-  assert.deepEqual(computeLateAlerts([withPickup({ activity_started_ts: `${today} 09:20:00`, activity_arrived_ts: `${today} 09:28:00` })], today, {}), []);
+  assert.deepEqual(computeLateAlerts([withPickup({ activity_started_ts: `${today} 09:20:00`, activity_arrived_ts: `${today} 09:58:00` })], today, {}), []);
   const busy: Job = { ...job, job_id: 102, stops: [{ stop_id: 9, stop_type_id: 1, activity_started_ts: `${today} 09:20:00` }] };
   assert.equal(computeLateAlerts([job, busy], today, {}).filter((a) => a.job_id === 101).length, 1, "a busy driver defers nothing");
 
@@ -93,9 +93,10 @@ try {
   assert.deepEqual(computeLateAlerts([asap], today, null, at("12:00:00")), [], "ETA read failed: wait, do not guess");
 
   // ── The dashboard list keeps its own marks ──
-  assert.deepEqual(computePickupWarnings([job], today), [], "window end + 5 has not come yet at 09:30");
-  now = at("09:35:00");
-  assert.equal(computePickupWarnings([job], today).length, 1);
+  assert.equal(computePickupWarnings([job], today).length, 1, "on the dashboard since window end + 5");
+  assert.deepEqual(computeLateAlerts([job], today, {}, at("09:35:00")), [], "the dashboard mark (end + 5) is not the alarm");
+  assert.deepEqual(computeLateAlerts([{ ...job, stops: [{ ...job.stops[0], delivery_windows: [{ time_from: "09:00:00+07:00" }] }, job.stops[1]] }], today, {}, at("09:29:59")), []);
+  assert.equal(computeLateAlerts([{ ...job, stops: [{ ...job.stops[0], delivery_windows: [{ time_from: "09:00:00+07:00" }] }, job.stops[1]] }], today, {}, at("09:30:00")).length, 1, "no end time: the start stands in");
 
   now = at("21:30:00");
   await alert([{ ...job, job_id: 105 }]);

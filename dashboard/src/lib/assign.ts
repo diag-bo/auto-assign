@@ -64,7 +64,7 @@ const PICKUP_OVERDUE_MIN = 90;
 const WINDOW_LATE_MIN = 5;
 // The Zalo alarm (supervisor, 2026-11-11): the driver has not ARRIVED at the pickup
 // this long after the time the client was promised — booking time + the client's
-// portal ETA for an ASAP pickup, the window's START for a windowed one. Separate
+// portal ETA for an ASAP pickup, the window's END for a windowed one. Separate
 // from the dashboard marks above; see computeLateAlerts.
 const ARRIVE_GRACE_MIN = 30;
 // A client with no portal ETA on file (~6% of clients) counts as this many minutes
@@ -548,8 +548,7 @@ export interface LateAlert {
   job_id: number;
   pickup_customer_name: string | null;
   driver_name: string | null;
-  /** Minutes past the promised time (ETA / window start), or past booking when
-   *  the client has no ETA. */
+  /** Minutes past the promised time (ETA / window end). */
   minutes_late: number;
   /** What the minutes are measured against, as the alert shows it. */
   ref: string;
@@ -579,7 +578,7 @@ const hhmmOfMs = (ms: number) =>
 /**
  * The Zalo alarm rule. Pure. A pickup is due when the driver has still not ARRIVED
  * ARRIVE_GRACE_MIN after the promise:
- *   - windowed: the window's START (not its end, which is the dashboard's mark);
+ *   - windowed: the window's END (its start when Cartrack supplies no end);
  *   - ASAP: booking time + the client's portal ETA (`etaMins`, by pickup customer id).
  *     No ETA on file → DEFAULT_ETA_MIN. `etaMins` null (the ETA read
  *     failed) → ASAP pickups are left for the next cycle rather than guessed at.
@@ -601,11 +600,13 @@ export function computeLateAlerts(
     let promisedMs: number;
     let ref: string;
     if (window) {
-      const start = window.time_from ? parsePickupWindowTime(window.time_from, today) : null;
-      if (!start || isNaN(start.getTime())) continue;
-      promisedMs = Math.max(start.getTime(), clockStartMs);
+      if (!window.time_from) continue;
+      // The window END; its start only when Cartrack supplies no end.
+      const end = parsePickupWindowTime(window.time_to || window.time_from, today);
+      if (!end || isNaN(end.getTime())) continue;
+      promisedMs = Math.max(end.getTime(), clockStartMs);
       const to = window.time_to ? `–${window.time_to.slice(0, 5)}` : "";
-      ref = start.getTime() < clockStartMs
+      ref = end.getTime() < clockStartMs
         ? `tính từ ${CLOCK_START_HHMM}`
         : `khung giờ ${window.time_from.slice(0, 5)}${to}`;
     } else {
