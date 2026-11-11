@@ -72,6 +72,7 @@ export function Dashboard() {
   const [gaps, setGaps] = useState<CoverageGap[]>([]);
   const [overlaps, setOverlaps] = useState<ShiftOverlap[]>([]);
   const [parsedAt, setParsedAt] = useState("");
+  const parsedAtRef = useRef("");
   const [branchRules, setBranchRules] = useState<Record<string, BranchRule[]>>({});
   // Rows the user has just finished, hidden until the engine catches up.
   //
@@ -145,8 +146,12 @@ export function Dashboard() {
   const syncStatus = useCallback(async () => {
     try {
       const since = lastLogTsRef.current;
-      const qs = since ? `?since=${encodeURIComponent(since)}` : "";
-      const res = await fetch(`/api/assign/status${qs}`);
+      const qs = new URLSearchParams();
+      if (since) qs.set("since", since);
+      // Tells the server which config parse this tab already holds, so the poll
+      // does not re-send ~150 KB of unchanged config lists every 90 seconds.
+      if (parsedAtRef.current) qs.set("parsed", parsedAtRef.current);
+      const res = await fetch(`/api/assign/status?${qs}`);
       const data = await res.json();
       setIsRunning(!!data.armed);
       setArmUntil(data.state?.armedUntil ?? null);
@@ -201,7 +206,7 @@ export function Dashboard() {
           return next.size === prev.size ? prev : next;
         });
       }
-      if (typeof data.parsedAt === "string") setParsedAt(data.parsedAt);
+      if (typeof data.parsedAt === "string") { setParsedAt(data.parsedAt); parsedAtRef.current = data.parsedAt; }
       if (data.branchRules && typeof data.branchRules === "object") setBranchRules(data.branchRules as Record<string, BranchRule[]>);
       if (Array.isArray(data.failed)) {
         const dismissed = dismissedFailedRef.current;

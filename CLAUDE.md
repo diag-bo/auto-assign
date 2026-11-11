@@ -680,6 +680,10 @@ Already done — do not redo:
   only the first create jobs (2026-11-09).
 - MISA leave sync posts only days not already on file — one read, the route's own
   duplicate rule (`onFile` in `leave-push.mjs`), was ~209 POSTs a morning (2026-11-09).
+- Dashboard status poll (/api/assign/status, every 90 s per open tab) answered
+  ~160 KB each time, ~150 KB of it config lists (`branchRules`, `gaps`,
+  `unfinished`) that change only on a re-parse. The tab now sends the `parsedAt` it
+  holds (`?parsed=`) and the server leaves the lists out when it matches (2026-11-11).
 - Leave panel (/api/leave-status, ~11 Supabase reads a call): `day-config.ts` now
   shares one in-flight rule read per tab instead of one per date asked, and skips
   the client/driver name lookups it never showed (2026-11-11). A temporary

@@ -19,7 +19,11 @@ export async function GET(req: NextRequest) {
   // copy of them; only a failed config load pays for the full hash.
   const [light, config] = await Promise.all([getStatusBundle(100, false), loadConfig()]);
   const bundle = config ? light : await getStatusBundle(100);
+  // The config lists are ~150 KB of a ~160 KB answer and change only when the config
+  // is parsed again, so a poll that already holds this parse (`parsed`) gets none of
+  // them: the dashboard keeps what it has when the fields are absent.
+  const same = !!config?.parsedAt && req.nextUrl.searchParams.get("parsed") === config.parsedAt;
   return NextResponse.json({ ...statusPayload(bundle, req.nextUrl.searchParams.get("since")),
-    ...(config ? { unfinished: config.unfinished, gaps: config.gaps, overlaps: config.overlaps,
+    ...(config && !same ? { unfinished: config.unfinished, gaps: config.gaps, overlaps: config.overlaps,
       branchRules: config.branchRules, parsedAt: config.parsedAt } : {}) });
 }
