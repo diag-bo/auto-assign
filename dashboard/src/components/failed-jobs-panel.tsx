@@ -15,6 +15,7 @@ import { UncoveredLeaveSection, uncoveredLeaveCount } from "./leave-status-panel
 import { DriverName } from "./driver-name";
 import type { FailedJob, FailedReason, PickupWarning, ConfigDriver } from "@/lib/types";
 import type { LeaveOnDate } from "@/lib/leave-config";
+import type { StuckBatch } from "@/lib/batch-arrival";
 import { OpenInAdminButton } from "./job-admin-panel";
 import { BranchEditor } from "./config-todo-panel";
 import { servesDropoff } from "@/lib/config-shift";
@@ -103,6 +104,16 @@ function fmtLate(m: number): string {
 
 /** An ISO stamp as VN wall-clock HH:mm — the form every other time on this tab is
  *  in, so the header's "tính đến" reads against the rows' own reference times. */
+function ddmmVn(iso: string): string {
+  return new Date(iso).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", timeZone: "Asia/Ho_Chi_Minh" });
+}
+
+/** "45 phút trước" / "5 giờ trước" / "3 ngày trước". */
+function ago(iso: string): string {
+  const min = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+  return min < 60 ? `${min} phút trước` : min < 48 * 60 ? `${Math.floor(min / 60)} giờ trước` : `${Math.floor(min / 1440)} ngày trước`;
+}
+
 function hhmmVn(iso: string): string {
   return new Date(iso).toLocaleTimeString("vi-VN", {
     hour: "2-digit", minute: "2-digit", timeZone: "Asia/Ho_Chi_Minh",
@@ -487,6 +498,7 @@ export function FailedJobsPanel({
   failed,
   warnings,
   warningsAt,
+  batchArrivals,
   scheduleErrors,
   drivers,
   onAssign,
@@ -509,6 +521,8 @@ export function FailedJobsPanel({
   warnings: PickupWarning[];
   /** When the cycle computed `warnings` (ISO). Shown on the section header. */
   warningsAt: string | null;
+  /** Batches delivered to D001 in Cartrack that Labcenter has not received. */
+  batchArrivals: StuckBatch[];
   scheduleErrors: ScheduleErrorRow[];
   drivers: ConfigDriver[];
   onAssign: (job: FailedJob, driverId: string) => void;
@@ -526,7 +540,7 @@ export function FailedJobsPanel({
   // this list now, so an otherwise-clear day with an unfilled substitute must
   // not render the "nothing to do" state.
   const uncoveredLeave = uncoveredLeaveCount(leaveToday, leaveTomorrow);
-  const total = held.length + failed.length + warnings.length + scheduleErrors.length + uncoveredLeave;
+  const total = held.length + failed.length + warnings.length + batchArrivals.length + scheduleErrors.length + uncoveredLeave;
 
   // Group assign failures by reason in display-priority order.
   const byReason = new Map<FailedReason, FailedJob[]>();
@@ -675,6 +689,35 @@ export function FailedJobsPanel({
                 </div>
               </div>
             ))}
+
+            {/* ── Batches at D001 not received in Labcenter. Cartrack's D001
+                drop-off is the clock; a row with no drop-off is Labcenter-only
+                (transferred over a day ago, no matching Cartrack trip). ───── */}
+            {batchArrivals.length > 0 && (
+              <div className="space-y-1.5">
+                <SectionHeader label="Batch chưa nhận tại D001" count={batchArrivals.length} tone="amber" />
+                <div className={listBox}>
+                  {batchArrivals.map((b) => (
+                    <div key={b.code} className="px-2 py-1.5 hover:bg-slate-50">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                        <span className="font-mono text-sm font-semibold text-slate-800">{b.code}</span>
+                        <span className="text-slate-500">{b.branch} → D001{b.samples != null ? ` · ${b.samples} mẫu` : ""}</span>
+                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">
+                          Labcenter: {b.status === "created" ? "chưa chuyển" : "đã chuyển, chưa nhận"}
+                        </span>
+                        <span className="ml-auto" />
+                        {onOpenJob && b.job_id != null && <OpenInAdminButton jobId={b.job_id} onOpen={onOpenJob} />}
+                      </div>
+                      <div className="mt-0.5 text-slate-500">
+                        {b.delivered_at
+                          ? <>Giao D001 lúc {b.delivered_at.slice(11, 16)} {b.delivered_at.slice(8, 10)}/{b.delivered_at.slice(5, 7)}{b.driver ? ` · ${b.driver}` : ""} · {ago(b.delivered_at.replace(" ", "T") + "+07:00")}</>
+                          : <>Không thấy chuyến Cartrack · chuyển lúc {b.transferred_at ? `${hhmmVn(b.transferred_at)} ${ddmmVn(b.transferred_at)} · ${ago(b.transferred_at)}` : "?"}</>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* ── Other unassignable: fixed-schedule run errors ───────────── */}
             {scheduleErrors.length > 0 && (

@@ -1,6 +1,7 @@
 import type { Config, Driver, FailedJob, Job, LogEntry, LogLevel, Mapping, PickupWarning, Stop, TimelineRoute, TimelineStop } from "./types";
 import { getDrivers, getActiveDriversFast, getAllAssignedDriverJobs, assignJob, assignJobViaUpdate, getCustomerById, updateJobStops, parkOnProxy, updateJobSendToDriverAt, updateJobScheduledDeliveryTs, unassignJob, optimizeDriverRoute, getJobsByStatusAndDate, getUnassignedJobsFast, getJobsByDate, getTimelineRoutes, timelineRoutesToJobs, getJobDetails, jsonRpc, PROXY_DRIVER_ID, type Env } from "./cartrack";
 import { publishSnapshot } from "./day-snapshot";
+import { maybeCheckBatchArrivals } from "./batch-arrival";
 import { getDueTomorrowJobs } from "./scheduled-dispatch";
 import { remindScheduledPickup } from "./scheduled-pickup-reminder";
 import { SCHEDULE_JOB_LABEL, loadSchedulePreassignments, scheduleReferenceBase } from "./schedule-job";
@@ -2635,6 +2636,8 @@ export async function autoAssignCycle(
         const _pubCpu = cpuMsSince(_cPub);
         clog(`[fetch] snapshot publish: ${res} in ${Date.now() - _tPub}ms wall${_pubCpu == null ? "" : ` / ${_pubCpu}ms cpu`} (age at write ${Date.now() - fetchedAt}ms)`);
       }
+      // D001 drop-offs vs Labcenter receipt — off this same timeline, gated to ~10 min.
+      if (!onlyJobIds && env === "prod") await maybeCheckBatchArrivals(timelineJobs);
       // Proxy release, timeline-sourced: the proxy driver's parked jobs are
       // already in the s4 partition (it's a driver on the timeline), so the
       // old per-cycle REST list is skipped. ONCE A DAY, on the first armed cycle,

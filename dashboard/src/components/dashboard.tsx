@@ -15,6 +15,7 @@ import { JobAdminPanel, type JobAdminRequest } from "./job-admin-panel";
 import { BatchLookupPanel } from "./batch-lookup-panel";
 import { DistanceTab } from "./distance-tab";
 import { FailedJobsPanel, type ScheduleErrorRow } from "./failed-jobs-panel";
+import type { StuckBatch } from "@/lib/batch-arrival";
 import { LeaveStatusPanel } from "./leave-status-panel";
 import { ConfigTodoPanel } from "./config-todo-panel";
 import { SheetAlarmBanner } from "./sheet-alarm-banner";
@@ -56,6 +57,7 @@ export function Dashboard() {
   );
   const [warnings, setWarnings] = useState<PickupWarning[]>([]);
   const [warningsAt, setWarningsAt] = useState<string | null>(null);
+  const [batchArrivals, setBatchArrivals] = useState<StuckBatch[]>([]);
   /** Counts explicit leave refreshes, so the leave panel's week grid — which
    *  owns a fetch of its own — re-reads after a source sync completes. */
   const [leaveRefreshKey, setLeaveRefreshKey] = useState(0);
@@ -177,6 +179,7 @@ export function Dashboard() {
         setHeld((data.held as HeldJob[]).filter((j) => !dismissed.has(j.job_id)));
       }
       if (Array.isArray(data.warnings)) setWarnings(data.warnings);
+      if (Array.isArray(data.batchArrivals)) setBatchArrivals(data.batchArrivals as StuckBatch[]);
       if (Array.isArray(data.sheetAlarms)) setSheetAlarms(data.sheetAlarms as SheetAlarm[]);
       const nextUnfinished = Array.isArray(data.unfinished) ? (data.unfinished as UnfinishedConfigRow[]) : null;
       const nextGaps = Array.isArray(data.gaps) ? (data.gaps as CoverageGap[]) : null;
@@ -644,7 +647,7 @@ export function Dashboard() {
   // engine is blocked on, not the work waiting on a person.
   const attentionCount =
     held.length + failed.length + warnings.length + scheduleErrors.length +
-    sheetAlarms.length + (syncFailure ? 1 : 0) +
+    batchArrivals.length + sheetAlarms.length + (syncFailure ? 1 : 0) +
     // Only rows the engine still cannot see. A recovered row is already being
     // honoured, so it is a tidy-up, not something to handle today.
     leave.invalid.filter((r) => !r.recovered).length;
@@ -823,6 +826,7 @@ export function Dashboard() {
                       failed={failed}
                       warnings={warnings}
                       warningsAt={warningsAt}
+                      batchArrivals={batchArrivals}
                       scheduleErrors={scheduleErrors}
                       drivers={drivers}
                       onAssign={handleManualAssign}

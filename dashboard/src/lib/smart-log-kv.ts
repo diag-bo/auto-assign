@@ -5,6 +5,7 @@ import type { LogEntry, PickupWarning, FailedJob, SheetAlarm, UnfinishedConfigRo
 import { scopedDropoffName } from "./unmapped-row";
 import { PRIMARY_HOST } from "./self-url";
 import type { DropoffSwapRecord } from "./psc-closing";
+import type { StuckBatch } from "./batch-arrival";
 
 /**
  * COMMAND BUDGET — read this before adding a Redis call to a per-cycle path.
@@ -98,6 +99,9 @@ const F_GAPS = "coverage_gaps";
 const F_PARSED_AT = "config_parsed_at";
 const F_BRANCH_RULES = "config_branch_rules";
 const F_OVERLAPS = "config_overlaps";
+// Batches Cartrack delivered to D001 that Labcenter has not received (batch-arrival.ts).
+// Written only when the list changes, ~every 10 min at most.
+const F_BATCH_ARRIVALS = "batch_arrivals";
 const WARNINGS_MAX_AGE_MS = 600_000; // 10 min — what the old PICKUP_WARNINGS TTL enforced
 
 // Server-backed live log: flat list of recent entries (all levels), so the
@@ -381,6 +385,7 @@ export interface CycleSnapshot {
   overlaps?: ShiftOverlap[];
   parsedAt?: string;
   branchRules?: Record<string, BranchRule[]>;
+  batchArrivals?: StuckBatch[];
 }
 
 /** Replace part or all of the per-cycle snapshot in ONE command.
@@ -417,6 +422,7 @@ export async function setCycleSnapshot(snap: CycleSnapshot): Promise<void> {
   if (snap.parsedAt)    fields[F_PARSED_AT]   = snap.parsedAt;
   if (snap.branchRules) fields[F_BRANCH_RULES] = JSON.stringify(snap.branchRules);
   if (snap.overlaps)    fields[F_OVERLAPS]     = JSON.stringify(snap.overlaps);
+  if (snap.batchArrivals) fields[F_BATCH_ARRIVALS] = JSON.stringify(snap.batchArrivals);
   if (Object.keys(fields).length === 0) return;
   await redis.hset(CYCLE_SNAPSHOT_KEY, fields);
   if (snap.parsedAt && fields[F_GAPS] !== undefined) publishedConfigParse = snap.parsedAt;
@@ -427,6 +433,13 @@ export async function getHeldJobs(): Promise<HeldJob[]> {
   const redis = getRedis();
   if (!redis) return [];
   return parseList<HeldJob>(await redis.hget(CYCLE_SNAPSHOT_KEY, F_HELD));
+}
+
+/** Last stuck-batch list, for a cold instance carrying rows forward. */
+export async function getBatchArrivals(): Promise<StuckBatch[]> {
+  const redis = getRedis();
+  if (!redis) return [];
+  return parseList<StuckBatch>(await redis.hget(CYCLE_SNAPSHOT_KEY, F_BATCH_ARRIVALS));
 }
 
 /** Current failed-jobs snapshot ("Cần xử lý" panel). */
@@ -1283,6 +1296,8 @@ export interface StatusBundle {
   parsedAt: string;
   /** The rules each listed branch already has. */
   branchRules: Record<string, BranchRule[]>;
+  /** Batches delivered to D001 that Labcenter has not received. */
+  batchArrivals: StuckBatch[];
 }
 
 /** One pipeline request to Upstash — and, since held/failed/warnings moved into a
@@ -1290,7 +1305,7 @@ export interface StatusBundle {
  *  90s per open tab, so each command removed here is ~24k a month. */
 export async function getStatusBundle(logLimit = 100, withConfigLists = true): Promise<StatusBundle> {
   const redis = getRedis();
-  if (!redis) return { state: null, lastChecked: null, deployments: [], logs: [], held: [], warnings: [], warningsAt: null, failed: [], sheetAlarms: [], unfinished: [], gaps: [], overlaps: [], parsedAt: "", branchRules: {} };
+  if (!redis) return { state: null, lastChecked: null, deployments: [], logs: [], held: [], warnings: [], warningsAt: null, failed: [], sheetAlarms: [], unfinished: [], gaps: [], overlaps: [], parsedAt: "", branchRules: {}, batchArrivals: [] };
 
   const pipe = redis.pipeline();
   pipe.get(ARM_KEY);
@@ -1301,7 +1316,7 @@ export async function getStatusBundle(logLimit = 100, withConfigLists = true): P
   // on every 90s poll of every open tab was a measurable share of the Redis bandwidth
   // that hit the 10 GB cap (2026-10-12).
   if (withConfigLists) pipe.hgetall(CYCLE_SNAPSHOT_KEY);
-  else pipe.hmget(CYCLE_SNAPSHOT_KEY, F_HELD, F_FAILED, F_WARNINGS, F_WARNINGS_TS, F_SHEET_ALARMS, F_PARSED_AT);
+  else pipe.hmget(CYCLE_SNAPSHOT_KEY, F_HELD, F_FAILED, F_WARNINGS, F_WARNINGS_TS, F_SHEET_ALARMS, F_PARSED_AT, F_BATCH_ARRIVALS);
   pipe.hgetall(DEPLOY_HEARTBEAT_KEY);
   const [rawState, rawLogs, rawSnapshot, rawDeployments] = await pipe.exec();
 
@@ -1324,6 +1339,7 @@ export async function getStatusBundle(logLimit = 100, withConfigLists = true): P
   const unfinished = parseList<UnfinishedConfigRow>(snap[F_UNFINISHED]);
   const gaps = parseList<CoverageGap>(snap[F_GAPS]);
   const overlaps = parseList<ShiftOverlap>(snap[F_OVERLAPS]);
+  const batchArrivals = parseList<StuckBatch>(snap[F_BATCH_ARRIVALS]);
   const parsedAt = typeof snap[F_PARSED_AT] === "string" ? (snap[F_PARSED_AT] as string) : "";
   const branchRules = (() => { try { const v = snap[F_BRANCH_RULES]; return v ? (typeof v === "string" ? JSON.parse(v) : v) : {}; } catch { return {}; } })() as Record<string, BranchRule[]>;
 
@@ -1352,6 +1368,7 @@ export async function getStatusBundle(logLimit = 100, withConfigLists = true): P
     overlaps,
     parsedAt,
     branchRules,
+    batchArrivals,
   };
 }
 
