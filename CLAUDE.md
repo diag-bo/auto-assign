@@ -662,6 +662,12 @@ Active CPU (the API cannot read CPU on Hobby).
 Measured 2026-11-09, 05:00–09:30 on D: engine 90 runs = 39 s (~0.43 s a run);
 leave sync 209 calls = 17 s; /api/location-jobs 303 calls = 13 s; bookings 10 s;
 morning sync 8 s. A weekday is ~8–10 min, so an 8-day turn is ~1–1.5 h.
+2026-11-11 (Wed) on D, 06:34–18:34: ~6.8 min in all — engine 252 runs = 2 m
+(~0.48 s a run, 0.8% errors); /api/location-jobs 1.1K = 42 s; bookings 219 = 35 s;
+/api/leave-status 172 = 34 s (~0.2 s a call, already client-throttled to 5 min);
+/api/assign/status 583 = 26 s; driver app (driver-jobs, cham-cong, pay/me) ~41 s.
+D's 30-day meter: 34 min after ~2.75 days holding → ~11–12 min a weekday.
+Observability on Hobby shows at most the last 12 hours.
 
 Already done — do not redo:
 - Dashboard status poll (90 s) stops while the tab is hidden and resumes on return.
