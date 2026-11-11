@@ -5,8 +5,10 @@ import { defaultDropoff, pscName } from "./kqvt";
 import { classifyPickupReply, getPickupReply, plainText, STAFF_CHECK, stripMentions } from "./scheduled-pickup-cancel";
 import { acquireCreateLock, releaseCreateLock } from "./smart-log-kv";
 import { getRedis } from "./tat-archive";
-import { vnDate, vnHoursMinutes, vnMinutesSinceMidnight } from "./time";
+import { addDays, vnDate, vnHoursMinutes, vnMinutesSinceMidnight } from "./time";
 import { notifyAdminGroup, sendZaloMessage } from "./zalo";
+import { NDTP_PICKUP } from "./ndtp";
+import { parkScheduledJob } from "./scheduled-dispatch";
 
 // What a client bot does in a group, per the group's switches in "Bot khách hàng".
 // Every bot's webhook (the two legacy routes and /api/zalo/bot/[id]) goes through
@@ -51,6 +53,13 @@ async function groupReply(bot: ClientBot, group: ClientBotGroup, text: string, c
   const mentions = [mentionOf(bot)];
   const plain = stripMentions(text, mentions).replace(/^\//, "").trim();
   if (GUIDE_COMMANDS.includes(plain)) return guideText(bot, group, await requestKeywords());
+  // NĐTP: a measles sample goes to D001 at 06:00 the next morning (supervisor, 2026-11-11).
+  // "không có mẫu sởi" is ignored outright — it must not reach the cancel path either.
+  if (group.customer_id === NDTP_PICKUP.customer_id) {
+    const soi = measlesRequest(text);
+    if (soi === "none") return null;
+    if (soi === "trip") return requestMeaslesTrip(group, noteFromMessage(text, bot.name));
+  }
   // A "không có mẫu" reply is never a request, even with cancel switched off — it
   // contains the request words ("có mẫu", "lấy mẫu") negated.
   if (classifyPickupReply(text, mentions) !== "ignore") {
@@ -131,6 +140,57 @@ export async function requestTrip(group: ClientBotGroup, note: string): Promise<
   } catch (e) {
     console.error("[client-bot] trip create uncertain", group.chat_id, e);
     return `⚠️ Chưa xác nhận được chuyến. ${STAFF_CHECK}`;
+  }
+}
+
+/** "sởi" / "mẫu sởi" books the measles trip; "không có mẫu sởi" is "none". Accented
+ *  "sởi" or the whole phrase "mau soi" — a bare unaccented "soi" is too many words. */
+export function measlesRequest(text: string): "trip" | "none" | null {
+  const plain = plainText(text);
+  if (!text.normalize("NFC").toLowerCase().includes("sởi") && !/\bmau soi\b/.test(plain)) return null;
+  return /\b(?:khong|ko|k|hong|chua|0)(?: co)? (?:mau )?soi\b/.test(plain) ? "none" : "trip";
+}
+
+const MEASLES_AT = "06:00";
+
+/** NĐTP → D001, dated tomorrow with a 06:00 pickup window and parked on the queue proxy
+ *  (released an hour before), the /ndtp tomorrow way. No stop note: the note gate would
+ *  hold a 06:00 trip until someone pressed Giao ngay — the admin group gets the words. */
+async function requestMeaslesTrip(group: ClientBotGroup, note: string): Promise<string> {
+  const tomorrow = addDays(vnDate(), 1);
+  const lockKey = `zalo-bot-soi:${group.customer_id}-${tomorrow}`;
+  if (!(await acquireCreateLock(lockKey))) return "Yêu cầu vừa được ghi nhận. Vui lòng đợi 2 phút trước khi gửi lại.";
+  const day = `${tomorrow.slice(8, 10)}/${tomorrow.slice(5, 7)}`;
+  try {
+    const res = await createJob({
+      job_type_id: 1,
+      schedule_type_id: 2,
+      scheduled_delivery_ts: `${tomorrow} 00:00:00`,
+      reference_number: `Zalo Sởi ${(group.label || "KH").slice(0, 30)}→D001_${day}`,
+      stops: [
+        { stop_type_id: 1, customer_id: group.customer_id, duration: 5,
+          delivery_windows: [{ time_from: `${MEASLES_AT}:00+07:00`, time_to: "06:30:00+07:00" }],
+          todos: [PICKUP_PHOTO_TODO, { todo_type_id: 5, description: "Số lượng mẫu" }] },
+        { stop_type_id: 2, customer_id: LAB_CUSTOMER_ID, duration: 5, todos: [DROPOFF_PHOTO_TODO] },
+      ],
+    }, "prod");
+    if (!res.ok) {
+      if (res.status < 500) void releaseCreateLock(lockKey);
+      console.error("[client-bot] measles trip create failed", group.chat_id, JSON.stringify(res.body).slice(0, 300));
+      return `⚠️ Chưa tạo được chuyến lấy mẫu sởi. ${STAFF_CHECK}`;
+    }
+    const jobId = res.body?.data?.job_id;
+    let parked = false;
+    if (jobId) parked = await parkScheduledJob(jobId, `${tomorrow} ${MEASLES_AT}:00`, "prod").catch(e => {
+      console.error("[client-bot] measles trip park failed", jobId, e);
+      return false;
+    });
+    await notifyAdminGroup(`🧪 Mẫu sởi NĐTP — lấy ${MEASLES_AT} ngày ${day} → D001\nJob #${jobId ?? "?"}\nKhách nhắn: “${note}”` +
+      (parked ? "" : "\n⚠️ Chưa hẹn giờ được — cần xử lý tay"));
+    return `✅ Đã nhận yêu cầu lấy mẫu sởi${jobId ? ` (Job #${jobId})` : ""}. Diag sẽ qua lấy lúc ${MEASLES_AT} sáng ${day}, xin cám ơn!`;
+  } catch (e) {
+    console.error("[client-bot] measles trip create uncertain", group.chat_id, e);
+    return `⚠️ Chưa xác nhận được chuyến lấy mẫu sởi. ${STAFF_CHECK}`;
   }
 }
 
