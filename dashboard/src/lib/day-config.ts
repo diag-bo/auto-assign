@@ -67,7 +67,8 @@ function dutyRows(rows: readonly Record<string, string>[]): Mapping[] {
       // Not read by any duty question, and not invented either: these carry the
       // empty value the type calls for so nothing downstream reads a stale one.
       dropoff_id: (row["dropoff_id"] ?? "").trim(),
-      first_name_last_name: (row["Driver"] ?? "").trim(),
+      // Read without names (see loadTab), so the label would be raw ids.
+      first_name_last_name: "",
       bot_token: "", chat_id: "", alt_drop_off_id: "",
     });
   }
@@ -89,14 +90,33 @@ function dutyRows(rows: readonly Record<string, string>[]): Mapping[] {
 // path taken a handful of times, buys the question being unaskable.
 const tabs: Partial<Record<ConfigTab, { day: string; mappings: Mapping[] }>> = {};
 
+// One read per tab per instance at a time: /api/leave-status asks for up to nine
+// dates at once, and on a cold instance each used to start its own full read.
+const inflight: Partial<Record<ConfigTab, { day: string; p: Promise<Mapping[] | null> }>> = {};
+
 export function invalidateDayConfigCache() { delete tabs.mapping; delete tabs.sunday; }
 
 async function loadTab(tab: ConfigTab): Promise<Mapping[] | null> {
   const today = `${vnDate()}:${await readConfigGen()}`;
   const hit = tabs[tab];
   if (hit && hit.day === today) return hit.mappings;
+  const pending = inflight[tab];
+  if (pending && pending.day === today) return pending.p;
+  // ponytail: diagnostic for the leave panel's CPU (2026-11-11) — says whether a
+  // re-read is a cold instance or the config stamp moving. Remove once read.
+  console.log(`[day-config] load ${tab}: ${hit ? `stamp ${hit.day} -> ${today}` : "cold"}`);
+  const p = readTab(tab, today);
+  inflight[tab] = { day: today, p };
+  try { return await p; } finally { if (inflight[tab]?.p === p) delete inflight[tab]; }
+}
+
+async function readTab(tab: ConfigTab, today: string): Promise<Mapping[] | null> {
   try {
-    const rows = await masterRuleRows(tab==="sunday" ? "sunday" : "weekday");
+    // No client or driver names: nothing here shows them, and they were two of
+    // the read's five Supabase queries. activeLocationRules still sees the stored
+    // names; its "{inactive}" tag only ever marks a client the id check already
+    // drops (0 of 4,221 active rules differ, checked 2026-11-11).
+    const rows = await masterRuleRows(tab==="sunday" ? "sunday" : "weekday", undefined, false);
     const duty = dutyRows(activeLocationRules(rows,await inactiveMasterClientIds()));
     // The same Sunday reading the engine uses: overlapping rules share, not clash.
     const mappings = tab === "sunday" ? mergeSundayOverlaps(duty) : duty;

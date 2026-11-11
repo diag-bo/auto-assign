@@ -52,8 +52,8 @@ export async function masterRules(day:"weekday"|"sunday", scope: { ids?: number[
 }
 
 /** Only this boundary derives legacy fields for the unchanged assignment engine. */
-export async function masterRuleRows(day:"weekday"|"sunday", sundayDate?:string):Promise<Record<string,string>[]> {
-  const rules=await masterRules(day,{sundayDate});
+export async function masterRuleRows(day:"weekday"|"sunday", sundayDate?:string, resolveNames=true):Promise<Record<string,string>[]> {
+  const rules=await masterRules(day,{sundayDate,resolveNames});
   const out:Record<string,string>[]=[];
   for (const r of rules) {
     const row={...r.row_data};

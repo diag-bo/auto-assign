@@ -680,6 +680,11 @@ Already done — do not redo:
   only the first create jobs (2026-11-09).
 - MISA leave sync posts only days not already on file — one read, the route's own
   duplicate rule (`onFile` in `leave-push.mjs`), was ~209 POSTs a morning (2026-11-09).
+- Leave panel (/api/leave-status, ~11 Supabase reads a call): `day-config.ts` now
+  shares one in-flight rule read per tab instead of one per date asked, and skips
+  the client/driver name lookups it never showed (2026-11-11). A temporary
+  `[day-config] load` log line says whether each re-read was a cold instance or the
+  config stamp moving — read it in the Logs tab, then decide on caching the answer.
 
 ## Config rule fields
 
