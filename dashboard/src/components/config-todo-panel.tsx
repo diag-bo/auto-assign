@@ -685,6 +685,13 @@ export function BranchEditor({
     {value:"",label:"Không thay thế điểm giao"},
     ...(locations ?? []).map(c => ({value:c.id,label:c.name})),
   ], [locations, bulkSchedules]);
+  // A NEW line's drop-off MATCH (the rule fires only for jobs going there). Scope
+  // is fixed at creation, so saved lines never get this picker. By name: that is
+  // what the save resolves.
+  const dropoffOptions = useMemo(() => [
+    {value:"",label:"Mọi điểm giao"},
+    ...[...new Set((locations ?? []).map(c => c.name))].map(name => ({value:name,label:name})),
+  ], [locations]);
   // Only ever taken of a SAVED line, which always carries its id and revision.
   const snapshot = (line: Line): ConfigRowSnapshot => ({ rule_id:line.rule_id!, revision:line.revision!, driver: line.driver, start: line.start, end: line.end, dropoff: line.dropoff });
   const expectedRows = useRef(new Map(initial.map((line) => [line.key, snapshot(line)])));
@@ -942,7 +949,13 @@ export function BranchEditor({
           <div className="col-span-2 min-w-0 lg:col-span-1">
             <DriverPicker value={l.driver} onChange={(v) => patch(i, { driver: v, ...(l.assignment_mode ? {assignment_mode:splitDriverNames(v).length>1 ? "smart" : l.assignment_mode} : {}) })} drivers={drivers}
               className="flex min-h-8 min-w-0 flex-wrap items-center gap-1 rounded border border-slate-300 bg-white px-1 py-0.5 focus-within:ring-2 focus-within:ring-indigo-400/50" />
-            {l.dropoff.trim() && l.dropoff.trim() !== dropoffName.trim() && <span className="mt-1 block break-words text-[10px] text-slate-600" title={`Chỉ áp dụng cho job giao tới ${l.dropoff.trim()}`}>→ {l.dropoff.trim()}</span>}
+            {!l.rule_id && !bulkSchedules && locations ? <div className="mt-1">
+              <span className="mb-0.5 block text-[10px] text-slate-600">Chỉ khi giao tới</span>
+              <FilterMultiSelect label={`Điểm giao áp dụng ca ${i + 1}`} multiple={false}
+                values={l.dropoff.trim() ? [l.dropoff.trim()] : []} options={dropoffOptions}
+                onChange={values => patch(i, { dropoff: values[0] ?? "" })}
+                disabled={busy || !locations.length} placeholder={locations.length ? "Mọi điểm giao" : "Đang tải điểm giao…"} />
+            </div> : l.dropoff.trim() && l.dropoff.trim() !== dropoffName.trim() && <span className="mt-1 block break-words text-[10px] text-slate-600" title={`Chỉ áp dụng cho job giao tới ${l.dropoff.trim()}`}>→ {l.dropoff.trim()}</span>}
           </div>
           <div className="col-span-2 min-w-0 lg:col-span-1">
             {l.assignment_mode && <label className="text-xs"><span className="sr-only">Chế độ phân công</span><select value={l.assignment_mode} onChange={e=>patch(i,{assignment_mode:e.target.value as "fixed"|"smart"})} className="h-8 w-full rounded border border-slate-300 bg-white px-1 text-slate-900"><option value="fixed" disabled={splitDriverNames(l.driver).length>1}>Cố định</option><option value="smart">Thông minh</option></select></label>}

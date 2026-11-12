@@ -64,6 +64,13 @@ export function Dashboard() {
   const [configRefreshKey, setConfigRefreshKey] = useState(0);
   const [syncingSource, setSyncingSource] = useState<"cartrack" | "labcenter" | null>(null);
   const [metadataReport, setMetadataReport] = useState<(LabcenterMetadataReport & {state:"running"|"complete"|"failed"; error?:string; morningAt?:string}) | null>(null);
+  const ignoreIssue = async (issue: LabcenterMetadataReport["issues"][number]) => {
+    try {
+      const res = await fetch("/api/morning-issues", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({customer_id:issue.customer_id, kind:issue.kind, detail:issue.detail})});
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+      setMetadataReport((prev) => prev && {...prev, issues:prev.issues.filter((i) => !(i.customer_id === issue.customer_id && i.kind === issue.kind && i.detail === issue.detail))});
+    } catch (e) { toast.error(`Không bỏ qua được: ${e instanceof Error ? e.message : e}`); }
+  };
   const [syncingMisa, setSyncingMisa] = useState(false);
   const [failed, setFailed] = useState<FailedJob[]>([]);
   const [sheetAlarms, setSheetAlarms] = useState<SheetAlarm[]>([]);
@@ -746,16 +753,17 @@ export function Dashboard() {
                 {metadataReport.state === "failed" && <span className="mt-1 block font-normal">{metadataReport.error}. Chọn Đồng Bộ Thông Tin → Labcenter để thử lại.</span>}
               </summary>
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-current/15 pt-2">
-                <span className="max-w-prose leading-relaxed">Đối chiếu điểm giao mặc định, ETA và người phụ trách từ Labcenter. Các số trên là kết quả kiểm tra, không phải số hồ sơ thay đổi. Giá trị chưa xác minh được giữ nguyên. {metadataReport.morningAt !== undefined ? "Mỗi sáng kiểm tra lại toàn bộ khách hàng; mục đã xử lý sẽ tự biến mất sau lần kiểm tra kế tiếp." : "Báo cáo hiển thị đến khi tải lại trang."}</span>
+                <span className="max-w-prose leading-relaxed">Đối chiếu điểm giao mặc định, ETA và người phụ trách từ Labcenter. Các số trên là kết quả kiểm tra, không phải số hồ sơ thay đổi. Giá trị chưa xác minh được giữ nguyên. {metadataReport.morningAt !== undefined ? "Mỗi sáng kiểm tra lại toàn bộ khách hàng; mục đã xử lý sẽ tự biến mất sau lần kiểm tra kế tiếp; \"Bỏ qua\" ẩn một mục đến khi nội dung của nó thay đổi." : "Báo cáo hiển thị đến khi tải lại trang."}</span>
                 <button className="shrink-0 text-blue-700 underline" onClick={() => {
                   const url = URL.createObjectURL(new Blob([JSON.stringify(metadataReport,null,2)], {type:"application/json"}));
                   const link = document.createElement("a"); link.href=url; link.download="labcenter-refresh-report.json"; link.click(); URL.revokeObjectURL(url);
                 }}>Tải báo cáo</button>
               </div>
               {metadataReport.issues.length > 0 && <div className="mt-2 max-h-56 overflow-auto">
-                <table className="w-full text-left"><thead><tr><th className="p-1">Mã KH</th><th className="p-1">Địa điểm</th><th className="p-1">Cần kiểm tra</th></tr></thead>
+                <table className="w-full text-left"><thead><tr><th className="p-1">Mã KH</th><th className="p-1">Địa điểm</th><th className="p-1">Cần kiểm tra</th><th className="p-1"><span className="sr-only">Bỏ qua</span></th></tr></thead>
                   <tbody>{metadataReport.issues.map((issue,i) => <tr key={`${issue.customer_id}:${issue.kind}:${i}`} className="border-t border-amber-200/70">
                     <td className="p-1 align-top">{issue.client_code}</td><td className="p-1 align-top"><span>{issue.name}</span><span className="block text-[10px] opacity-70">{issue.customer_id}</span></td><td className="p-1 align-top">{issue.detail}</td>
+                    <td className="p-1 align-top text-right"><button className="whitespace-nowrap text-blue-700 underline" title="Ẩn mục này ở các lần kiểm tra sau, đến khi nội dung thay đổi" onClick={() => void ignoreIssue(issue)}>Bỏ qua</button></td>
                   </tr>)}</tbody>
                 </table>
               </div>}
