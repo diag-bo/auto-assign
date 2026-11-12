@@ -40,7 +40,7 @@
  * one — verified on throwaway prod jobs 2026-10-18. Only a stop still "Chờ lấy" is ever
  * touched, so no photo a driver already took is at stake.
  */
-import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, parkOnProxy, updateJobSendToDriverAt, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
+import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, updateJobSendToDriverAt, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
 import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
 import { roadDistancesFromPoint } from "./distance-cache";
@@ -596,10 +596,12 @@ export function pickupDriverAt(clientId: string, psc: string, jobs: Job[], now: 
 }
 
 /** Park a smart client's collect job on the proxy driver, so it is not in the
- *  dispatcher's unassigned pool while it waits for smartCollector. Release time NOW:
- *  the proxy release skips KQ/VT jobs, and a later time stays on the job when it is
- *  handed to a driver — whose app then hides it until then (34529199, 12/11). */
-export const parkCollect = (jobId: number, env: Env) => parkOnProxy(jobId, vnTimestamp(), env);
+ *  dispatcher's unassigned pool while it waits for smartCollector. NO release time:
+ *  the proxy release skips KQ/VT jobs; a 23:59 stayed on the job when it was handed to
+ *  a driver, whose app then hid it until night (34529199, 12/11); and "now" is already
+ *  past when it lands, which Cartrack refuses — the park then never assigned the proxy
+ *  (34529748, 12/11). */
+export const parkCollect = (jobId: number, env: Env) => assignJob(PROXY_DRIVER_ID, jobId, env);
 
 /** A client the config serves with a smart pool (two or more candidates). */
 export const isSmartClient = (config: Config, clientId: string) =>
@@ -753,9 +755,10 @@ export async function kqvtCycle(
       const parked = collect && collect !== "gone" ? collect.delivery_driver_id === PROXY_DRIVER_ID : false;
       if (verdict === "wait" && e.smart && collect && collect !== "gone" && (parked || !collect.delivery_driver_id)) {
         const who = smartCollector(e, jobsToday, now);
-        // Release time to NOW first: the driver's app hides a job until its release time,
-        // and one parked by the old code carries 23:59 (34529199, 12/11).
-        if (who) await updateJobSendToDriverAt(e.job_id, vnTimestamp(), env).catch(() => null);
+        // Release time to 2 minutes ahead first (Cartrack takes no past time): the
+        // driver's app hides a job until its release time, and one parked by the old
+        // code carries 23:59 (34529199, 12/11).
+        if (who) await updateJobSendToDriverAt(e.job_id, vnTimestamp(new Date(now + 2 * 60_000)), env).catch(() => null);
         const res = who ? await assignJob(who.driverId, e.job_id, env).catch(() => null) : null;
         if (who && res && res.status >= 200 && res.status < 300) {
           e.collector = who.driverId;
