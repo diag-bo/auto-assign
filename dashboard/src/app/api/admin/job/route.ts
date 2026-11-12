@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getJobDetailsFast, type Env } from "@/lib/cartrack";
-import { isStopStarted } from "@/lib/job-filters";
+import { isStopStarted, PSC_DELIVERY_LABEL } from "@/lib/job-filters";
 import { sbSelect, supabaseConfigured } from "@/lib/supabase-rest";
 import type { RideHailTrip } from "@/lib/ride-hail";
 
@@ -60,6 +60,11 @@ export async function GET(req: NextRequest) {
           }
         : null,
       started: stops.some((s) => isStopStarted(s)),
+      // A one-stop KQ/VT collect job can be turned into PSC → client (kqvt-direct).
+      stop_count: stops.length,
+      // The RPC gives labels as objects ({ label }), REST as plain strings.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      is_kqvt: (data.labels ?? []).some((l: any) => (typeof l === "string" ? l : l?.label) === PSC_DELIVERY_LABEL),
       ride_hail: rideHail,
     });
   } catch (e) {

@@ -24,6 +24,8 @@ interface JobSummary {
   pickup: { stop_id: number | null; customer_id: string | null; customer_name: string | null } | null;
   dropoff: { stop_id: number | null; customer_id: string | null; customer_name: string | null } | null;
   started: boolean;
+  stop_count: number;
+  is_kqvt: boolean;
   ride_hail: RideHailTrip | null;
 }
 
@@ -107,8 +109,9 @@ export function JobAdminPanel({
   const searchSeq = useRef(0);
 
   // ── Actions ───────────────────────────────────────────────────────────────
-  const [confirming, setConfirming] = useState<null | "complete" | "dropoff">(null);
+  const [confirming, setConfirming] = useState<null | "complete" | "dropoff" | "direct">(null);
   const [completing, setCompleting] = useState(false);
+  const [converting, setConverting] = useState(false);
   const [changing, setChanging] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
   const [location, setLocation] = useState<DropoffLocation | null>(null);
@@ -312,6 +315,31 @@ export function JobAdminPanel({
       setCompleting(false);
     }
   }, [job, env, setHit]);
+
+  const doConvertDirect = useCallback(async () => {
+    if (!job) return;
+    const id = job.job_id;
+    setConverting(true);
+    try {
+      const res = await fetch(`/api/admin/kqvt-direct?env=${env}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? "Đổi thành giao tận nơi thất bại");
+        return;
+      }
+      toast.success(`Job ${id} đã huỷ → Job ${data.new_job_id} lấy tại PSC và giao tận nơi`);
+      setQuery(String(data.new_job_id));
+      lookupById(data.new_job_id);
+    } catch {
+      toast.error("Mất kết nối — chưa rõ đã đổi chưa, mở lại job để kiểm tra.");
+    } finally {
+      setConverting(false);
+    }
+  }, [job, env, lookupById]);
 
   const doGeofenceBypass = useCallback(async () => {
     const driverId = job?.delivery_driver_id;
@@ -526,6 +554,37 @@ export function JobAdminPanel({
                               </p>
                             ) : (
                               <>
+                                {/* ── KQ/VT one-stop → PSC + client ─────────── */}
+                                {job.is_kqvt && job.stop_count === 1 && !job.started && (
+                                  <section className="space-y-1.5 border-t border-slate-200 pt-3" aria-label="Đổi thành giao tận nơi">
+                                    <h4 className="text-xs font-semibold text-slate-800">Đổi thành giao tận nơi</h4>
+                                    <p className="text-xs leading-snug text-slate-600">
+                                      Thêm điểm giao tại khách: tài xế lấy KQ/VT ở PSC rồi giao thẳng cho khách. Tạo job mới, giữ tài xế, huỷ job này.
+                                    </p>
+                                    {confirming === "direct" ? (
+                                      <ConfirmBox
+                                        title={`Đổi Job ${job.job_id} thành giao tận nơi?`}
+                                        lines={[
+                                          job.reference_number ?? "",
+                                          driverName && !proxyKind(driverName, driverId)
+                                            ? `Tài xế: ${driverDisplayName(driverName) || driverName}`
+                                            : "Chưa có tài xế — job mới chờ điều phối.",
+                                          "Job này sẽ bị huỷ, thay bằng job mới.",
+                                        ].filter(Boolean)}
+                                        confirmLabel={converting ? "Đang đổi…" : "Xác nhận đổi"}
+                                        busy={converting}
+                                        tone="indigo"
+                                        onConfirm={doConvertDirect}
+                                        onCancel={() => setConfirming(null)}
+                                      />
+                                    ) : (
+                                      <Button size="sm" variant="outline" onClick={() => setConfirming("direct")}>
+                                        Đổi thành giao tận nơi…
+                                      </Button>
+                                    )}
+                                  </section>
+                                )}
+
                                 {/* ── Route: the everyday fix ───────────────── */}
                                 <section className="space-y-1.5 border-t border-slate-200 pt-3" aria-label="Đổi điểm giao">
                                   <h4 className="text-xs font-semibold text-slate-800">Đổi điểm giao</h4>

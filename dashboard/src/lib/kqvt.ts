@@ -40,7 +40,7 @@
  * one — verified on throwaway prod jobs 2026-10-18. Only a stop still "Chờ lấy" is ever
  * touched, so no photo a driver already took is at stake.
  */
-import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, parkOnProxy, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
+import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, parkOnProxy, updateJobSendToDriverAt, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
 import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
 import { roadDistancesFromPoint } from "./distance-cache";
@@ -50,7 +50,7 @@ import { PSC_ROUTES } from "./psc-routes-data";
 import { shortCode } from "./psc-dup";
 import { returnRideable, shiftMappingsForPsc, subToCoveredDriver } from "./return-trips";
 import { sbSelect } from "./supabase-rest";
-import { parseVnTimestamp, vnDate, vnHoursMinutes, vnTimestamp } from "./time";
+import { parseVnTimestamp, vnHoursMinutes, vnTimestamp } from "./time";
 import type { Config, FailedJob, Job, LogLevel } from "./types";
 import type { LeaveEntry } from "./leave-config";
 
@@ -436,6 +436,40 @@ export function collectVerdict(job: CollectState | "gone" | null | undefined): "
   return "wait";
 }
 
+/**
+ * Admin "Đổi thành giao tận nơi" (supervisor, 2026-11-12): a KQ/VT collect job that has
+ * not been started becomes a DIRECT job — pick up at the PSC, deliver to the client —
+ * keeping its driver (none if it was parked on the proxy). Made as a new direct job,
+ * the same one a near booking gets, then the one-stop job is cancelled; Cartrack is
+ * never asked to change a stop's type. If that cancel fails the new job is cancelled
+ * instead, so the items are never on two jobs. Only KQ/VT jobs: the client comes from
+ * the waiting list, and a one-stop job carries no client of its own.
+ */
+export async function convertToDirect(jobId: number, env: Env): Promise<{ ok: true; jobId: number; client: string } | { ok: false; status: number; error: string }> {
+  const e = (await loadPending()).find((x) => x.job_id === jobId);
+  if (!e) return { ok: false, status: 404, error: "Job này không phải chuyến lấy KQ/VT đang chờ — không biết giao cho khách nào." };
+  if (e.direct) return { ok: false, status: 409, error: "Job này đã là chuyến giao tận nơi." };
+  if (e.holder) return { ok: false, status: 409, error: "Tài xế đã lấy KQ/VT — không đổi được nữa." };
+  const job = await lookupJob(jobId, env) as (CollectState & { scheduled_delivery_ts?: string | null }) | "gone" | null;
+  if (!job || job === "gone") return { ok: false, status: 502, error: "Không đọc được job trên Cartrack, thử lại." };
+  if ([3, 5, 7].includes(job.job_status_id ?? 0)) return { ok: false, status: 409, error: "Job đã kết thúc." };
+  if ((job.stops ?? []).length !== 1 || job.stops![0].stop_status_id !== 1) return { ok: false, status: 409, error: "Chỉ đổi được job một điểm dừng chưa bắt đầu." };
+
+  const driver = job.delivery_driver_id && job.delivery_driver_id !== PROXY_DRIVER_ID ? job.delivery_driver_id : null;
+  const res = await createCollectJob(e, "", driver ? { driverId: driver } : null, env, true);
+  if (!res.jobId) return { ok: false, status: 502, error: `Cartrack không tạo được chuyến mới (${res.status}).` };
+  if (!(await cancelJob(jobId, jobVnDate(job), env).catch(() => false))) {
+    await cancelJob(res.jobId, jobVnDate(null), env).catch(() => false);
+    return { ok: false, status: 502, error: "Không huỷ được job cũ — giữ nguyên job cũ, thử lại." };
+  }
+  await savePending({
+    ...e, job_id: res.jobId, direct: true, smart: undefined, checked_ms: undefined,
+    collector: res.driverId ?? undefined, collector_name: res.driverId ? e.collector_name : undefined,
+  });
+  await dropPending(jobId);
+  return { ok: true, jobId: res.jobId, client: e.client_name };
+}
+
 /** One job read directly: "gone" only on a 404 (deleted), null when it could not tell. */
 async function lookupJob(jobId: number, env: Env): Promise<CollectState | "gone" | null> {
   const res = await fetch(`${BASE_URL}/jobs/${jobId}`, { headers: getHeaders(env), cache: "no-store" }).catch(() => null);
@@ -562,9 +596,10 @@ export function pickupDriverAt(clientId: string, psc: string, jobs: Job[], now: 
 }
 
 /** Park a smart client's collect job on the proxy driver, so it is not in the
- *  dispatcher's unassigned pool while it waits for smartCollector. The proxy release
- *  skips KQ/VT jobs (Cartrack reads the 23:59 back as the minute it was parked). */
-export const parkCollect = (jobId: number, env: Env) => parkOnProxy(jobId, `${vnDate()} 23:59:00`, env);
+ *  dispatcher's unassigned pool while it waits for smartCollector. Release time NOW:
+ *  the proxy release skips KQ/VT jobs, and a later time stays on the job when it is
+ *  handed to a driver — whose app then hides it until then (34529199, 12/11). */
+export const parkCollect = (jobId: number, env: Env) => parkOnProxy(jobId, vnTimestamp(), env);
 
 /** A client the config serves with a smart pool (two or more candidates). */
 export const isSmartClient = (config: Config, clientId: string) =>
@@ -718,6 +753,9 @@ export async function kqvtCycle(
       const parked = collect && collect !== "gone" ? collect.delivery_driver_id === PROXY_DRIVER_ID : false;
       if (verdict === "wait" && e.smart && collect && collect !== "gone" && (parked || !collect.delivery_driver_id)) {
         const who = smartCollector(e, jobsToday, now);
+        // Release time to NOW first: the driver's app hides a job until its release time,
+        // and one parked by the old code carries 23:59 (34529199, 12/11).
+        if (who) await updateJobSendToDriverAt(e.job_id, vnTimestamp(), env).catch(() => null);
         const res = who ? await assignJob(who.driverId, e.job_id, env).catch(() => null) : null;
         if (who && res && res.status >= 200 && res.status < 300) {
           e.collector = who.driverId;
