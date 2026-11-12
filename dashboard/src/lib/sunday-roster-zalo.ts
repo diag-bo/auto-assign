@@ -93,11 +93,24 @@ const imageUrl = (date: string, kind: ImageKind, stage: Stage, v: string) =>
   `${BASE_URL}/api/sunday-roster/image?date=${date}&kind=${kind}&stage=${stage}&sig=${imageSig(date)}&v=${v}`;
 const imageKey = (date: string, kind: ImageKind, v: string) => `sunday_roster:img:${date}:${kind}:${v}`;
 
-/** Draw one picture; null for "open" when nothing is open. */
+/** Draw one picture; null for "open" when nothing is open. A drawing costs
+ *  ~3.5 s of CPU and depends only on what goes into it (no clock), so the same
+ *  roster is drawn once and reused for a day: repeated "Xem ảnh" cost 17
+ *  drawings on 2026-11-12. Any edit, leave change or deploy changes the key. */
 export async function drawImage(date: string, kind: ImageKind, stage: Stage, lines: SundayLine[]): Promise<Buffer | null> {
   const published = lines.filter((l) => isPublished(l.area));
+  const hash = crypto.createHash("sha256")
+    .update(JSON.stringify([process.env.VERCEL_GIT_COMMIT_SHA ?? "", date, kind, stage, published]))
+    .digest("base64url").slice(0, 32);
+  const key = `sunday_roster:draw:${hash}`;
+  const redis = getRedis();
+  const hit = await redis?.get<string>(key).catch(() => null);
+  if (typeof hit === "string" && hit) return Buffer.from(hit, "base64");
   const res = kind === "roster" ? await renderRosterImage(date, published, stage) : await renderOpenSlotsImage(date, published, stage);
-  return res ? Buffer.from(await res.arrayBuffer()) : null;
+  if (!res) return null;
+  const png = Buffer.from(await res.arrayBuffer());
+  await redis?.set(key, png.toString("base64"), { ex: 86_400 }).catch((e) => console.error("[sunday-roster] draw cache:", e));
+  return png;
 }
 
 /** Draw the pictures NOW and keep them for a day, so the links answer at once.

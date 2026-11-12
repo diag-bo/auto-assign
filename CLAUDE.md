@@ -689,6 +689,9 @@ Already done — do not redo:
   the client/driver name lookups it never showed (2026-11-11). A temporary
   `[day-config] load` log line says whether each re-read was a cold instance or the
   config stamp moving — read it in the Logs tab, then decide on caching the answer.
+- Sunday roster pictures (~3.5 s CPU a drawing): the same roster is drawn once and
+  reused for a day, keyed on what goes into it, so repeated "Xem ảnh" cost nothing
+  after the first; 2026-11-12 had 17 drawings for one unchanged roster (2026-11-12).
 
 ## Config rule fields
 
