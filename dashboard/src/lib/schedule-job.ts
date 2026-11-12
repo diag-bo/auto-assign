@@ -18,6 +18,12 @@ export interface ScheduleJobRow {
   dropoff_id: string;
   dropoff_name: string;
   delivery_window: string;
+  /** End of the pickup window, "HH:MM". "" = delivery_window + 30 min; equal to
+   *  delivery_window = an exact time. The delivery_create_job RPC (createJob's main
+   *  path, and fleetweb's own) stores a zero-length window — verified 2026-11-12, job
+   *  34529775 read back 20:00–20:00. The REST fallback refuses one (422), so an exact
+   *  row whose RPC create fails comes back as an ERROR for Retry rather than a job. */
+  window_end: string;
   reference: string;
   sent_to_driver_before: number;
   days: boolean[];
@@ -154,7 +160,7 @@ function buildJobPayload(
   refNumber: string,
   sendToDriverAt: string,
 ) {
-  const pickupTo = addMinutes(row.delivery_window, 30);
+  const pickupTo = row.window_end || addMinutes(row.delivery_window, 30);
   return {
     job_type_id: 1,
     schedule_type_id: 1,
@@ -221,6 +227,13 @@ export async function createScheduleJob(
       ...base,
       status: "ERROR",
       message: `Invalid delivery_windows time: "${row.delivery_window}" (expected HH:MM)`,
+    };
+  }
+  if (row.window_end && !(TIME_RE.test(row.window_end) && row.window_end >= row.delivery_window)) {
+    return {
+      ...base,
+      status: "ERROR",
+      message: `Invalid window end "${row.window_end}" (must be HH:MM, not before ${row.delivery_window})`,
     };
   }
 

@@ -21,6 +21,7 @@ interface ScheduleRow {
   dropoff_id: string;
   dropoff_name: string;
   delivery_window: string;
+  window_end: string; // "" = +30 min
   reference: string;
   sent_to_driver_before: number;
   days: boolean[]; // index 0=Sun .. 6=Sat
@@ -39,6 +40,7 @@ interface Draft {
   dropoff_id: string;
   dropoff_name: string;
   delivery_window: string;
+  window_end: string; // "" = +30 min
   reference: string;
   sent_to_driver_before: number;
   days: boolean[];
@@ -53,6 +55,7 @@ const EMPTY_DRAFT: Draft = {
   dropoff_id: "",
   dropoff_name: "",
   delivery_window: "",
+  window_end: "",
   reference: "",
   sent_to_driver_before: 60,
   days: [false, true, true, true, true, true, true],
@@ -487,6 +490,7 @@ function ScheduleForm({
     !d.pickup_id || !d.pickup_name ? "Chưa chọn điểm lấy"
     : !d.dropoff_id || !d.dropoff_name ? "Chưa chọn điểm giao"
     : !/^\d{2}:\d{2}$/.test(d.delivery_window) ? "Chưa nhập giờ lấy"
+    : d.window_end && d.window_end < d.delivery_window ? "Giờ kết thúc trước giờ lấy"
     : !d.reference.trim() ? "Thiếu reference"
     : d.driver_id === "?" ? "Tài xế chưa khớp"
     : !d.days.some(Boolean) ? "Chưa chọn ngày nào"
@@ -509,6 +513,7 @@ function ScheduleForm({
           dropoff_id: d.dropoff_id,
           dropoff_name: d.dropoff_name,
           delivery_window: d.delivery_window,
+          window_end: d.window_end,
           reference: d.reference.trim(),
           sent_to_driver_before: d.sent_to_driver_before,
           days: d.days,
@@ -597,6 +602,7 @@ function ScheduleForm({
                     dropoff_id: dropoff.id,
                     dropoff_name: dropoff.name,
                     delivery_window: window,
+                    window_end: source.window_end,
                     sent_to_driver_before: source.sent_to_driver_before,
                     days: [...source.days],
                     driver_id: source.driver_id,
@@ -630,6 +636,20 @@ function ScheduleForm({
         <label className="block space-y-0.5">
           <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Giờ lấy</span>
           <input type="time" value={d.delivery_window} onChange={(e) => set({ delivery_window: e.target.value })} className={INPUT_CLS} />
+        </label>
+        <label className="block space-y-0.5">
+          <span className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-slate-400">
+            Đến (trống = +30′)
+            <button
+              type="button"
+              disabled={!d.delivery_window}
+              onClick={(e) => { e.preventDefault(); set({ window_end: d.delivery_window }); }}
+              className="normal-case tracking-normal font-semibold text-indigo-600 hover:underline disabled:opacity-40"
+            >
+              Đúng giờ
+            </button>
+          </span>
+          <input type="time" value={d.window_end} onChange={(e) => set({ window_end: e.target.value })} className={INPUT_CLS} />
         </label>
         <label className="block space-y-0.5">
           <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Gửi trước (phút)</span>
@@ -777,6 +797,7 @@ export function ScheduleListPanel({ env, drivers }: { env: Env; drivers: ConfigD
     dropoff_id: r.dropoff_id,
     dropoff_name: r.dropoff_name || FULL_NAME_BY_ID.get(r.dropoff_id) || "",
     delivery_window: /^\d:\d{2}$/.test(r.delivery_window) ? `0${r.delivery_window}` : r.delivery_window,
+    window_end: r.window_end ?? "",
     reference: r.reference,
     sent_to_driver_before: r.sent_to_driver_before,
     days: [...r.days],
@@ -919,7 +940,7 @@ export function ScheduleListPanel({ env, drivers }: { env: Env; drivers: ConfigD
                     </span>
                     <div className="flex shrink-0 items-center gap-1">
                       <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 font-mono font-semibold text-indigo-700">
-                        {r.delivery_window}
+                        {r.delivery_window}{r.window_end === r.delivery_window ? " đúng giờ" : r.window_end ? `–${r.window_end}` : ""}
                       </span>
                       <button
                         type="button"

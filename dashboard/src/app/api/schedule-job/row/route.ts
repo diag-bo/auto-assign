@@ -14,6 +14,7 @@ type Body = {
   pickup_id?: string;
   dropoff_id?: string;
   delivery_window?: string;
+  window_end?: string;
   reference?: string;
   sent_to_driver_before?: number | string;
   days?: boolean[];
@@ -21,7 +22,7 @@ type Body = {
 };
 
 type ScheduleWrite = {
-  pickup_id: string; dropoff_id: string; driver_id: string; delivery_window: string;
+  pickup_id: string; dropoff_id: string; driver_id: string; delivery_window: string; window_end: string;
   reference: string; sent_to_driver_before: number; days: boolean[];
 };
 
@@ -38,6 +39,13 @@ async function toRow(body: Body): Promise<ScheduleWrite | string> {
   if (!reference) return "Thiếu reference";
   const m = TIME_RE.exec(window);
   if (!m) return `Giờ lấy không hợp lệ: "${window}" (HH:MM)`;
+  const start = `${m[1].padStart(2, "0")}:${m[2]}`;
+  // Blank = the default +30 min window.
+  const endRaw = (body.window_end ?? "").trim();
+  const e = endRaw ? TIME_RE.exec(endRaw) : null;
+  if (endRaw && !e) return `Giờ kết thúc không hợp lệ: "${endRaw}" (HH:MM)`;
+  const window_end = e ? `${e[1].padStart(2, "0")}:${e[2]}` : "";
+  if (window_end && window_end < start) return "Giờ kết thúc không được trước giờ lấy";
   const before = Number(body.sent_to_driver_before ?? 60);
   if (!Number.isInteger(before) || before < 0 || before > 720)
     return "Gửi trước (phút) phải là số nguyên 0–720";
@@ -61,7 +69,8 @@ async function toRow(body: Body): Promise<ScheduleWrite | string> {
     pickup_id,
     dropoff_id,
     driver_id,
-    delivery_window: `${m[1].padStart(2, "0")}:${m[2]}`,
+    delivery_window: start,
+    window_end,
     reference,
     sent_to_driver_before: before,
     days: body.days.map(Boolean),
