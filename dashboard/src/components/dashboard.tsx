@@ -68,7 +68,12 @@ export function Dashboard() {
     try {
       const res = await fetch("/api/morning-issues", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({customer_id:issue.customer_id, kind:issue.kind, detail:issue.detail})});
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
-      setMetadataReport((prev) => prev && {...prev, issues:prev.issues.filter((i) => !(i.customer_id === issue.customer_id && i.kind === issue.kind && i.detail === issue.detail))});
+      setMetadataReport((prev) => {
+        if (!prev) return prev;
+        const issues = prev.issues.filter((i) => !(i.customer_id === issue.customer_id && i.kind === issue.kind && i.detail === issue.detail));
+        // The morning panel exists only to list findings; with none left it goes, as it does on load.
+        return !issues.length && prev.morningAt !== undefined ? null : {...prev, issues};
+      });
     } catch (e) { toast.error(`Không bỏ qua được: ${e instanceof Error ? e.message : e}`); }
   };
   const [syncingMisa, setSyncingMisa] = useState(false);
