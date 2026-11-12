@@ -2355,8 +2355,11 @@ async function recheckSmartJobs(
 
     const route = `${p.job.stops.find((s) => s.stop_type_id === 1)?.customer_name ?? p.customerId} → ${
       p.job.stops.find((s) => s.stop_type_id === 2)?.customer_name ?? "—"}`;
-    const detail = `${driverDisplayName(holder.name)} ${holder.etaMin}min (${holder.distLabel}) → ${
-      driverDisplayName(winner.name)} ${winner.etaMin}min (${winner.distLabel}), sớm hơn ${gain} phút`;
+    // Everyone ranked, as the first-assignment line lists them, plus who sat out as
+    // full — or the line reads as though only two drivers were ever considered.
+    const rankStr = ranked.map((x, i) => `${i + 1}. ${driverDisplayName(x.name)} ${x.etaMin}min (${x.distLabel})`).join(" | ");
+    const detail = `${driverDisplayName(holder.name)} ${holder.etaMin}min → ${
+      driverDisplayName(winner.name)} ${winner.etaMin}min, sớm hơn ${gain} phút${p.pool.fullTag} | ${rankStr}`;
     if (mode === "log") {
       log(`Job ${jobId} - RECHECK (chỉ ghi log, chưa chuyển): ${detail} | ${route}`, "INFO");
       await logRecheck(env, today, `${vnTimestamp()} job ${jobId} would move: ${detail} | ${route}`);
