@@ -84,7 +84,6 @@ export function Dashboard() {
   const [gaps, setGaps] = useState<CoverageGap[]>([]);
   const [overlaps, setOverlaps] = useState<ShiftOverlap[]>([]);
   const [parsedAt, setParsedAt] = useState("");
-  const parsedAtRef = useRef("");
   const [branchRules, setBranchRules] = useState<Record<string, BranchRule[]>>({});
   // Rows the user has just finished, hidden until the engine catches up.
   //
@@ -160,9 +159,6 @@ export function Dashboard() {
       const since = lastLogTsRef.current;
       const qs = new URLSearchParams();
       if (since) qs.set("since", since);
-      // Tells the server which config parse this tab already holds, so the poll
-      // does not re-send ~150 KB of unchanged config lists every 90 seconds.
-      if (parsedAtRef.current) qs.set("parsed", parsedAtRef.current);
       const res = await fetch(`/api/assign/status?${qs}`);
       const data = await res.json();
       setIsRunning(!!data.armed);
@@ -198,28 +194,6 @@ export function Dashboard() {
       if (Array.isArray(data.warnings)) setWarnings(data.warnings);
       if (Array.isArray(data.batchArrivals)) setBatchArrivals(data.batchArrivals as StuckBatch[]);
       if (Array.isArray(data.sheetAlarms)) setSheetAlarms(data.sheetAlarms as SheetAlarm[]);
-      const nextUnfinished = Array.isArray(data.unfinished) ? (data.unfinished as UnfinishedConfigRow[]) : null;
-      const nextGaps = Array.isArray(data.gaps) ? (data.gaps as CoverageGap[]) : null;
-      const nextOverlaps = Array.isArray(data.overlaps) ? (data.overlaps as ShiftOverlap[]) : null;
-      if (nextUnfinished) setUnfinished(nextUnfinished);
-      if (nextGaps) setGaps(nextGaps);
-      if (nextOverlaps) setOverlaps(nextOverlaps);
-      // Forget a row the engine no longer reports: it has caught up, and keeping
-      // the key would hide the row if it ever legitimately came back.
-      if (nextUnfinished || nextGaps || nextOverlaps) {
-        setDoneKeys((prev) => {
-          if (prev.size === 0) return prev;
-          const live = new Set<string>([
-            ...(nextUnfinished ?? []).map((u) => `u:${u.rule_id}`),
-            ...(nextGaps ?? []).map((g) => `g:${g.customer_id}|${g.at}`),
-            ...(nextOverlaps ?? []).map((o) => `o:${overlapKey(o)}`),
-          ]);
-          const next = new Set([...prev].filter((k) => live.has(k)));
-          return next.size === prev.size ? prev : next;
-        });
-      }
-      if (typeof data.parsedAt === "string") { setParsedAt(data.parsedAt); parsedAtRef.current = data.parsedAt; }
-      if (data.branchRules && typeof data.branchRules === "object") setBranchRules(data.branchRules as Record<string, BranchRule[]>);
       if (Array.isArray(data.failed)) {
         const dismissed = dismissedFailedRef.current;
         const now = Date.now();
@@ -472,6 +446,42 @@ export function Dashboard() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [syncStatus, loadScheduleErrors, loadLeaveStatus]);
+
+  // "Cần tạo config" lists: only while the Config tab is open, and again after a
+  // save or refresh (configRefreshKey). Not on the status poll — ~150 KB looked at
+  // about once a week.
+  const configTabOpen = rightTab === "config";
+  useEffect(() => {
+    if (!configTabOpen) return;
+    let live = true;
+    fetch("/api/config/todo", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!live || !data) return;
+        const nextUnfinished = (data.unfinished ?? []) as UnfinishedConfigRow[];
+        const nextGaps = (data.gaps ?? []) as CoverageGap[];
+        const nextOverlaps = (data.overlaps ?? []) as ShiftOverlap[];
+        setUnfinished(nextUnfinished);
+        setGaps(nextGaps);
+        setOverlaps(nextOverlaps);
+        setBranchRules((data.branchRules ?? {}) as Record<string, BranchRule[]>);
+        setParsedAt(typeof data.parsedAt === "string" ? data.parsedAt : "");
+        // Forget a row the config no longer reports: it has caught up, and keeping
+        // the key would hide the row if it ever legitimately came back.
+        setDoneKeys((prev) => {
+          if (prev.size === 0) return prev;
+          const keep = new Set<string>([
+            ...nextUnfinished.map((u) => `u:${u.rule_id}`),
+            ...nextGaps.map((g) => `g:${g.customer_id}|${g.dropoff_name ?? ""}|${g.at}`),
+            ...nextOverlaps.map((o) => `o:${overlapKey(o)}`),
+          ]);
+          const next = new Set([...prev].filter((k) => keep.has(k)));
+          return next.size === prev.size ? prev : next;
+        });
+      })
+      .catch(() => { /* keep what is shown */ });
+    return () => { live = false; };
+  }, [configTabOpen, configRefreshKey]);
 
   // Turn the switch ON — arm the server-side engine until the next 22:00 VN.
   const arm = useCallback(async () => {

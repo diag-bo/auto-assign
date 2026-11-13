@@ -684,6 +684,10 @@ Already done — do not redo:
   ~160 KB each time, ~150 KB of it config lists (`branchRules`, `gaps`,
   `unfinished`) that change only on a re-parse. The tab now sends the `parsedAt` it
   holds (`?parsed=`) and the server leaves the lists out when it matches (2026-11-11).
+  Then removed from the poll outright (2026-11-13): the `?parsed=` skip sent EMPTY
+  lists that hid "Cần tạo config" until a reload, and the panel is opened about once
+  a week. The Config tab now fetches `/api/config/todo` on open and after a save;
+  the status route no longer calls `loadConfig` at all.
 - Leave panel (/api/leave-status, ~11 Supabase reads a call): `day-config.ts` now
   shares one in-flight rule read per tab instead of one per date asked, and skips
   the client/driver name lookups it never showed (2026-11-11). A temporary
