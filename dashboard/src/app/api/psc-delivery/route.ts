@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { BASE_URL, getHeaders, getCustomerById } from "@/lib/cartrack";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
-import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, deliverTodo, isNear, isSmartClient, kqvtDropoff, loadBooked, parkCollect, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
+import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, deliverTodo, isNear, isSmartClient, kqvtDropoff, servedPscs, loadBooked, parkCollect, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
 import { loadConfig } from "@/lib/config";
 import { loadLeaveEntries } from "@/lib/leave-config";
 import { shortCode } from "@/lib/psc-dup";
@@ -207,7 +207,8 @@ export async function POST(req: NextRequest) {
         const near = route.lat != null && route.lon != null && await isNear({ lat: route.lat, lon: route.lon }, info.at).catch(() => false);
         const plan = near
           ? { collectAt: route.pickup, hops: [] as string[], autoAssign: true }
-          : planDelivery(route.pickup, dropoff);
+          // A closed PSC's clinic booked by its open next best (servedPscs) is that PSC's own.
+          : planDelivery(route.pickup, dropoff && servedPscs(route.pickup).includes(dropoff) ? route.pickup : dropoff);
         const route_ = plan.hops.map(pscName).join(" → ");
         const noteLine = [collectTodo(item, client), ...mine.map((u, i) => `Ảnh ${i + 1}: ${u}`)].join("\n");
 

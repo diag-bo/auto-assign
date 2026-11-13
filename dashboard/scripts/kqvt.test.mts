@@ -5,8 +5,9 @@
  * in a smart ranking, and who collects for a smart client.
  */
 import assert from "node:assert/strict";
-import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, pickupDriverAt, KQVT_VIA, nearCollector, openJobs, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
+import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, pickupDriverAt, KQVT_VIA, nearCollector, openJobs, servedPscs, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
 import { returnRideable } from "../src/lib/return-trips";
+import { PSC_ROUTES } from "../src/lib/psc-routes-data";
 import { PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "../src/lib/job-filters";
 import type { Job, Mapping } from "../src/lib/types";
 
@@ -222,5 +223,25 @@ assert.equal(await isNear({ lat: 10.775, lon: 106.673 }, null), false);
   assert.equal(await nearCollector(e, [{ ...pickupNear(9, "D", 0.001), stops: [{ stop_type_id: 1, stop_status_id: 1, customer_id: "X", latitude: at.lat, longitude: at.lon }] } as unknown as Job, atPscJob(10, "D")], now), null);
   // No client position → nothing.
   assert.equal(await nearCollector({ ...e, client_at: undefined }, jobs, now), null);
+}
+
+// Open jobs, counted as smart ranking does: a pickup whose window opens >60 min away
+// does not count.
+{
+  const later = { job_id: 30, job_status_id: 4, delivery_driver_id: "E", labels: [],
+    stops: [{ stop_type_id: 1, stop_status_id: 1, customer_id: "Y", delivery_windows: [{ time_from: "15:00:00+07" }] }, { stop_type_id: 2, stop_status_id: 1, customer_id: "PSC" }] } as unknown as Job;
+  const soon = { ...later, job_id: 31, stops: [{ stop_type_id: 1, stop_status_id: 1, customer_id: "Y" }, { stop_type_id: 2, stop_status_id: 1, customer_id: "PSC" }] } as unknown as Job;
+  assert.equal(openJobs("E", [later, soon], 10 * 60), 1);
+  assert.equal(openJobs("E", [later, soon], 14 * 60 + 30), 2);
+}
+
+// servedPscs: a PSC also books, at any hour, for every PSC whose next best leads to it —
+// D005 takes D010, D039, D041, D043, D049; a PSC with no next best goes to nobody else.
+{
+  const id = (code: string) => PSC_ROUTES.find((r) => r.psc_pickup === `BRA - ${code}`)!.pickup;
+  assert.deepEqual(new Set(servedPscs(id("D005"))), new Set(["D005", "D010", "D039", "D041", "D043", "D049"].map(id)));
+  assert.deepEqual(new Set(servedPscs(id("D002"))), new Set(["D002", "D026", "D027", "D044"].map(id)));
+  assert.deepEqual(servedPscs(id("D009")), [id("D009")]);
+  assert.ok(!servedPscs(id("D001")).includes(id("D009")));
 }
 console.log("kqvt: ok");

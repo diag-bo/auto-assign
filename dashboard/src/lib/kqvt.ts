@@ -43,16 +43,17 @@
 import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, updateJobSendToDriverAt, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
 import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
-import { MAX_OPEN_TASKS } from "./smart-rank";
+import { MAX_OPEN_TASKS, openTasks } from "./smart-rank";
 import { roadDistancesFromPoint } from "./distance-cache";
 import { resolveDriverChoices, resolveFixedDriver } from "./fixed-driver";
 import { LAB_CUSTOMER_ID, LAB_WATCHED_CLIENTS, PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "./job-filters";
 import { PSC_ROUTES } from "./psc-routes-data";
+import { PSC_TABLE } from "./psc-closing";
 import { shortCode } from "./psc-dup";
 import { returnRideable, shiftMappingsForPsc, subToCoveredDriver } from "./return-trips";
 import { sbSelect } from "./supabase-rest";
-import { parseVnTimestamp, vnHoursMinutes, vnTimestamp } from "./time";
-import type { Config, FailedJob, Job, LogLevel } from "./types";
+import { parseVnTimestamp, vnHoursMinutes, vnMinutesSinceMidnight, vnTimestamp } from "./time";
+import type { Config, FailedJob, Job, LogLevel, TimelineStop } from "./types";
 import type { LeaveEntry } from "./leave-config";
 
 const KEY = "kqvt:pending";
@@ -173,15 +174,30 @@ export async function defaultDropoff(clientId: string): Promise<string | null> {
   return rows[0]?.default_dropoff_id ?? null;
 }
 
+/** The PSCs whose clients `psc` books for: itself, and at ANY hour every PSC whose
+ *  next-best chain in PSC_CLOSING leads to it — D005 takes D010's clinics (supervisor,
+ *  2026-11-13). */
+export function servedPscs(psc: string): string[] {
+  const out = [psc];
+  for (const id of PSC_TABLE.keys()) {
+    const seen = new Set([id]);
+    for (let cur = PSC_TABLE.get(id)?.hubId; cur && !seen.has(cur); cur = PSC_TABLE.get(cur)?.hubId) {
+      if (cur === psc) { out.push(id); break; }
+      seen.add(cur);
+    }
+  }
+  return out;
+}
+
 /** The clients a PSC may book for: those whose default drop-off is that PSC — none on
  *  the master list means D001 (supervisor, 2026-11-03). D001 also books every location
  *  of the accounts its /qr page follows (LAB_WATCHED_CLIENTS, 2026-11-04); one dropping
  *  elsewhere goes multi-leg, riding the return trips to its drop-off (planDelivery).
  *  Throws when the list is unreadable. */
 export async function pscClients(psc: string): Promise<Set<string>> {
-  const f = psc === LAB_CUSTOMER_ID
-    ? `or=(default_dropoff_id.eq.${psc},default_dropoff_id.is.null,client_code.in.(${LAB_WATCHED_CLIENTS.join(",")}))`
-    : `default_dropoff_id=eq.${psc}`;
+  const parts = [`default_dropoff_id.in.(${servedPscs(psc).join(",")})`];
+  if (psc === LAB_CUSTOMER_ID) parts.push("default_dropoff_id.is.null", `client_code.in.(${LAB_WATCHED_CLIENTS.join(",")})`);
+  const f = `or=(${parts.join(",")})`;
   const rows = await sbSelect<{ customer_id: string }>("master_clients_read", `select=customer_id&${f}&limit=5000`);
   return new Set(rows.map((r) => r.customer_id));
 }
@@ -653,12 +669,16 @@ export function atPsc(driverId: string, psc: string, jobs: Job[], now: number): 
 /** Road distance under which another client's pickup counts as on the way (2026-11-13). */
 export const NEAR_PICKUP_KM = 1;
 
-/** Jobs still to work, roughly as smart ranking counts them (MAX_OPEN_TASKS): not done,
- *  not cancelled, not an untouched Cartrack plan slot. ponytail: no window rule. */
-export function openJobs(driverId: string, jobs: Job[]): number {
-  return jobs.filter((j) => j.delivery_driver_id === driverId && j.job_status_id !== 5 && j.job_status_id !== 7 &&
-    (j.stops ?? []).some((s) => s.stop_status_id !== 4 && s.stop_status_id !== 5) &&
-    !(j.last_assigned_plan_id && (j.stops ?? []).every((s) => s.stop_status_id === 1))).length;
+/** Jobs still to work, counted exactly as smart ranking counts them (openTasks, against
+ *  MAX_OPEN_TASKS): the cycle's lists carry jobs, so their stops are put in its shape. */
+export function openJobs(driverId: string, jobs: Job[], nowMinutes = vnMinutesSinceMidnight()): number {
+  const stops = jobs.filter((j) => j.delivery_driver_id === driverId && j.job_status_id !== 7).flatMap((j) =>
+    (j.stops ?? []).map((s) => ({
+      jobId: j.job_id, stopTypeId: s.stop_type_id, stopStatusId: s.stop_status_id,
+      deliveryWindows: s.delivery_windows?.[0] ? [{ timeFrom: s.delivery_windows[0].time_from }] : [],
+      planId: null, lastAssignedPlanId: j.last_assigned_plan_id ?? null,
+    }) as unknown as TimelineStop));
+  return openTasks(stops, nowMinutes);
 }
 
 /**
@@ -677,7 +697,7 @@ export async function nearCollector(e: KqvtEntry, jobs: Job[], now: number): Pro
     const s = (j.stops ?? []).find((x) => x.stop_type_id === 1 && x.stop_status_id === 1 && x.customer_id !== e.client_id);
     if (s?.latitude == null || s.longitude == null) continue;
     if (haversineKm(at.lat, at.lon, s.latitude, s.longitude) > NEAR_PICKUP_KM) continue;
-    if (!atPsc(id, e.psc, jobs, now) || openJobs(id, jobs) >= MAX_OPEN_TASKS) continue;
+    if (!atPsc(id, e.psc, jobs, now) || openJobs(id, jobs, vnMinutesSinceMidnight(new Date(now))) >= MAX_OPEN_TASKS) continue;
     cands.push({ job: j, lat: s.latitude, lon: s.longitude });
   }
   if (!cands.length) return null;
