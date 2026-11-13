@@ -21,6 +21,7 @@ import { averageRoster, rosterSunday, TEMPLATE_WEEKS, type RosterLine } from "./
 import { adminAlertText, awayFor, isPublished, openLines, POST_DAY, STAGE_LABEL, weeklyPostText, type AwayFact, type PostLine, type Stage } from "./sunday-roster-post";
 import { renderOpenSlotsImage, renderRosterImage } from "./sunday-roster-image";
 import { SELF_URL } from "./self-url";
+import { proofUploadConfigured, uploadToCartrack } from "./cartrack-files";
 
 // The deployment that signs the picture URL must be the one serving it: the two
 // Vercel accounts need not share the secret, and "Đăng Zalo" runs on account B.
@@ -113,23 +114,41 @@ export async function drawImage(date: string, kind: ImageKind, stage: Stage, lin
   return png;
 }
 
-/** Draw the pictures NOW and keep them for a day, so the links answer at once.
- *  Drawing takes 6–8 s, and Zalo refused a link that slow ("photo URL is
- *  invalid") while taking instant Cartrack images. ~0.8 MB per post, two posts
- *  a week. The open-slots picture is left out when nothing is open. */
+/** Draw the pictures NOW and hand Zalo links that answer at once. Drawing takes
+ *  6–8 s, and Zalo refused a link that slow ("photo URL is invalid") while taking
+ *  instant Cartrack images.
+ *
+ *  The pictures go to Cartrack (the proof-photo carrier) and Zalo gets Cartrack's
+ *  links: Zalo loads the picture from the link every time a driver opens the post,
+ *  so a link on our own site made every view a function call, and once its one-day
+ *  copy expired, a fresh drawing (31 calls on the morning of 2026-11-13, none of
+ *  them ours). Cartrack's links are permanent and public — supervisor's choice,
+ *  2026-11-13. If the upload fails, the post still goes out on our own link with
+ *  a one-day copy, as before. The open-slots picture is left out when nothing is open. */
 export async function preparedImageUrls(
   date: string, lines: SundayLine[], stage: Stage, kinds: readonly ImageKind[] = ["roster", "open"],
 ): Promise<string[]> {
-  const v = String(Date.now());
-  const redis = getRedis();
-  const urls: string[] = [];
+  const drawn: { kind: ImageKind; png: Buffer }[] = [];
   for (const kind of kinds) {
     const png = await drawImage(date, kind, stage, lines);
-    if (!png) continue;
-    await redis?.set(imageKey(date, kind, v), png.toString("base64"), { ex: 86_400 }).catch((e) => console.error("[sunday-roster] image cache:", e));
-    urls.push(imageUrl(date, kind, stage, v));
+    if (png) drawn.push({ kind, png });
   }
-  return urls;
+  if (!drawn.length) return [];
+  if (proofUploadConfigured()) {
+    try {
+      return await uploadToCartrack(drawn.map(({ kind, png }) => ({
+        name: `lich-cn-${date}-${kind}.png`, dataUrl: `data:image/png;base64,${png.toString("base64")}`,
+      })));
+    } catch (e) {
+      console.error("[sunday-roster] Cartrack upload failed, using our own link:", e);
+    }
+  }
+  const v = String(Date.now());
+  const redis = getRedis();
+  for (const { kind, png } of drawn) {
+    await redis?.set(imageKey(date, kind, v), png.toString("base64"), { ex: 86_400 }).catch((e) => console.error("[sunday-roster] image cache:", e));
+  }
+  return drawn.map(({ kind }) => imageUrl(date, kind, stage, v));
 }
 
 /** Links that draw on request — the admin preview, which nobody times out.
