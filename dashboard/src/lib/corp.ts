@@ -11,7 +11,7 @@ export const CORP_CLINICS: {
   customer_id: string; name: string; short: string; phone: string;
   dropoff: { id: string; name: string; code: string };
 }[] = [
-  { customer_id: "afe6f722-4daf-11f1-9378-fa163ee8d8ac", name: "22303 - D3 - DBPhu - Vietmedi Điện Biên Phủ", short: "Vietmedi Điện Biên Phủ", phone: "02862720399", dropoff: D001 },
+  { customer_id: "afe6f722-4daf-11f1-9378-fa163ee8d8ac", name: "22303 - D3 - DBPhu - Vietmedi Điện Biên Phủ", short: "Vietmedi Điện Biên Phủ", phone: "0363823675", dropoff: D001 },
   { customer_id: "8109495e-580f-11f1-9378-fa163ee8d8ac", name: "49787862 - D1 - NTMKhai - Phòng Khám Đa Khoa DHA Healthcare", short: "DHA Healthcare", phone: "0937192725", dropoff: D001 },
   { customer_id: "6c9c33de-8745-11ee-98f4-506b8d9879b5", name: "18564 - D1 - NTrai - PHÒNG KHÁM ĐA KHOA IVY HEALTH", short: "IVY Health", phone: "0908710710", dropoff: D001 },
   // Default phone is the one saved on the clinic in Cartrack (none was given).
