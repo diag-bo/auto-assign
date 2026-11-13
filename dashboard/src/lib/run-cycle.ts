@@ -5,6 +5,7 @@ import type { LogEntry } from "./types";
 import { vnTimestamp } from "./time";
 import type { Env } from "./cartrack";
 import type { MorningReads } from "./morning-reads";
+import { inTrial, saveTrial } from "./engine-trial";
 
 /**
  * Run one assign cycle for the given armed state and persist its logs. Shared by
@@ -17,7 +18,12 @@ export async function runArmedCycle(arm: ArmState, reads?: MorningReads): Promis
   if (!config) {
     logs = [{ ts: vnTimestamp(), level: "ERROR", msg: "Failed to load config" }];
   } else {
-    logs = await autoAssignCycle(config, arm.env as Env, false, undefined, reads);
+    const cpu0 = process.cpuUsage(), t0 = Date.now();
+    const { result, trial } = await inTrial(() => autoAssignCycle(config, arm.env as Env, false, undefined, reads));
+    logs = result;
+    const cpu = process.cpuUsage(cpu0);
+    await saveTrial(trial, arm.env, Math.round((cpu.user + cpu.system) / 1000), Date.now() - t0)
+      .catch((e) => console.error("[run-cycle] skip trial save failed:", e));
   }
 
   // Skip lines an early flush already stored (see assign.ts) — without this the

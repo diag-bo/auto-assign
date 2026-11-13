@@ -41,6 +41,7 @@ import { loadLeaveEntries, isDriverOnLeave, resolveSubstitute, type LeaveEntry }
 import { publishNoDriverRoutes } from "./psc-no-driver";
 import { getDriversOnDuty, resolveFixedDriver, findSmartMapping } from "./fixed-driver";
 import { sbSelect } from "./supabase-rest";
+import { noteFingerprint } from "./engine-trial";
 import { recheckMode, isRecheckable, moveGain, recordSmartAssign, readSmartAssigns, logRecheck } from "./smart-recheck";
 
 
@@ -2619,6 +2620,8 @@ export async function autoAssignCycle(
       cycleS5 = s5Jobs;
       timelineRoutesForSmart = routes; // reuse in smart-prep (skip 2nd identical JSON-RPC)
       partitionMs = Date.now() - _tPart;
+      // Skip trial (engine-trial.ts): the raw fetch, before anything below acts on it.
+      noteFingerprint(s2Jobs, [...s4Jobs, ...s5Jobs], config?.parsedAt ?? "", leaveEntries);
       clog(`[fetch] timeline: fetch ${fetchMs}ms + partition ${partitionMs}ms (s2:${s2Jobs.length} s4:${s4Jobs.length} s5:${s5Jobs.length} s2-src=${s2Src})`);
 
       // Publish the day for the branch feed. Both halves are already in hand — this is
@@ -2698,6 +2701,7 @@ export async function autoAssignCycle(
       cycleStartS2 = s2Jobs;
       assignedJobsToday = s4Jobs;
       cycleS5 = s5Jobs;
+      noteFingerprint(s2Jobs, [...s4Jobs, ...s5Jobs], config?.parsedAt ?? "", leaveEntries);
       clog(`[fetch] REST: fetch ${fetchMs}ms + partition ${partitionMs}ms (s2:${s2Jobs.length} s4:${s4Jobs.length} s5:${s5Jobs.length})`);
     }
 
