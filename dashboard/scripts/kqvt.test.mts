@@ -5,7 +5,7 @@
  * in a smart ranking, and who collects for a smart client.
  */
 import assert from "node:assert/strict";
-import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, pickupDriverAt, KQVT_VIA, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
+import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, pickupDriverAt, KQVT_VIA, nearCollector, openJobs, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
 import { returnRideable } from "../src/lib/return-trips";
 import { PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "../src/lib/job-filters";
 import type { Job, Mapping } from "../src/lib/types";
@@ -192,5 +192,35 @@ assert.equal(await isNear({ lat: 10.775, lon: 106.673 }, null), false);
   ] as unknown as Job[];
   assert.equal(pickupDriverAt("X", D001, jobs, now)?.driverId, "H");
   assert.equal(pickupDriverAt("X", D019, jobs, now), null);
+}
+
+// Nearby pickup (nearCollector): a driver at the PSC whose pickup at ANOTHER client is
+// within 1 km of this one; the nearest wins; not one with 3 open jobs; never the proxy.
+{
+  const now = Date.parse("2026-11-13T10:00:00+07:00");
+  const at = { lat: 10.78, lon: 106.69 };
+  const e = { ...entry, holder: undefined, smart: true, client_at: at };
+  const pickupNear = (id: number, driver: string, dLat: number) => ({
+    job_id: id, job_status_id: 4, delivery_driver_id: driver, labels: [],
+    stops: [{ stop_type_id: 1, stop_status_id: 1, customer_id: `C${id}`, latitude: at.lat + dLat, longitude: at.lon }, { stop_type_id: 2, stop_status_id: 1, customer_id: "PSC" }],
+  }) as unknown as Job;
+  const atPscJob = (id: number, driver: string) => ({
+    job_id: id, job_status_id: 5, delivery_driver_id: driver, labels: [],
+    stops: [{ stop_type_id: 2, stop_status_id: 4, customer_id: "PSC", activity_completed_ts: "2026-11-13 09:30:00" }],
+  }) as unknown as Job;
+  // 0.0045° ≈ 0.5 km, 0.0072° ≈ 0.8 km, 0.02° ≈ 2.2 km.
+  const jobs = [pickupNear(1, "A", 0.0072), atPscJob(2, "A"), pickupNear(3, "B", 0.0045), atPscJob(4, "B"), pickupNear(5, "C", 0.02), atPscJob(6, "C")];
+  assert.equal((await nearCollector(e, jobs, now))?.driverId, "B");
+  // B not at the PSC → A (0.8 km); nobody within 1 km → null.
+  assert.equal((await nearCollector(e, jobs.filter((j) => j.job_id !== 4), now))?.driverId, "A");
+  assert.equal(await nearCollector(e, [pickupNear(5, "C", 0.02), atPscJob(6, "C")], now), null);
+  // B full (3 open jobs) → A.
+  const full = [...jobs, pickupNear(7, "B", 0.5), pickupNear(8, "B", 0.5)];
+  assert.equal(openJobs("B", full), 3);
+  assert.equal((await nearCollector(e, full, now))?.driverId, "A");
+  // The client's own pickup is not "near": that is smartCollector's.
+  assert.equal(await nearCollector(e, [{ ...pickupNear(9, "D", 0.001), stops: [{ stop_type_id: 1, stop_status_id: 1, customer_id: "X", latitude: at.lat, longitude: at.lon }] } as unknown as Job, atPscJob(10, "D")], now), null);
+  // No client position → nothing.
+  assert.equal(await nearCollector({ ...e, client_at: undefined }, jobs, now), null);
 }
 console.log("kqvt: ok");

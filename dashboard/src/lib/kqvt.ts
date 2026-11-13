@@ -43,6 +43,7 @@
 import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, updateJobSendToDriverAt, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
 import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
+import { MAX_OPEN_TASKS } from "./smart-rank";
 import { roadDistancesFromPoint } from "./distance-cache";
 import { resolveDriverChoices, resolveFixedDriver } from "./fixed-driver";
 import { LAB_CUSTOMER_ID, LAB_WATCHED_CLIENTS, PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "./job-filters";
@@ -88,6 +89,11 @@ export interface KqvtEntry {
   /** Multi-leg (KQVT_VIA): also collected where it waits, by the driver of the client's
    *  sample pickup, if they are there before a return trip takes it. */
   early?: boolean;
+  /** Given to a driver whose pickup is NEAR the client (nearCollector), not at it: once
+   *  collected they get a delivery job at the client, having no visit there to hang it on. */
+  near_pickup?: boolean;
+  /** The client's position, looked up once for nearCollector. */
+  client_at?: { lat: number; lon: number };
 }
 
 export const NEAR_KM = 3;
@@ -486,27 +492,33 @@ export async function kqvtGoDirect(clientId: string, env: Env): Promise<string[]
         : `Job ${e.job_id} - KQ/VT chưa đổi được thành giao tận nơi: ${r.error} | ${e.client_name}`);
       continue;
     }
-    const { hours, minutes } = vnHoursMinutes();
-    const res = await createJob({
-      job_type_id: 3,
-      schedule_type_id: 1,
-      reference_number: `${pscName(e.psc)}→${e.client_name.slice(0, 60)}_${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
-      labels: [PSC_DELIVERY_LABEL],
-      delivery_driver_id: e.holder,
-      stops: [{
-        stop_type_id: 3, customer_id: e.client_id, duration: 5,
-        note: e.items.map(deliverTodo).join("\n"),
-        todos: e.items.map((i) => ({ todo_type_id: PHOTO, description: deliverTodo(i), is_required: true })),
-      }],
-    }, env);
-    const jobId = res.ok ? Number(res.body?.data?.job_id) || 0 : 0;
-    if (!jobId) { out.push(`KQ/VT - chưa tạo được chuyến giao cho ${e.holder_name ?? "tài xế"} (${res.status}) | ${e.client_name}`); continue; }
-    // Followed from here as a direct job already collected: done when the stop is.
-    await savePending({ ...e, job_id: jobId, direct: true, smart: undefined, collector: e.holder, collector_name: e.holder_name, collected_ms: e.collected_ms ?? Date.now(), holder: undefined, holder_name: undefined });
-    await dropPending(e.job_id);
-    out.push(`Job ${jobId} - giao KQ/VT tận nơi: ${e.holder_name ?? "tài xế"} (khách báo không có mẫu) | ${e.client_name}`);
+    out.push(await deliverFromHolder(e, env, "khách báo không có mẫu"));
   }
   return out;
+}
+
+/** A one-stop "Giao KQ/VT" job at the client for the driver holding the items, who has
+ *  no visit there to hang the hand-over on. The entry is followed from then on as a
+ *  direct job already collected: done when the stop is. Returns a run-log line. */
+export async function deliverFromHolder(e: KqvtEntry, env: Env, why: string): Promise<string> {
+  const { hours, minutes } = vnHoursMinutes();
+  const res = await createJob({
+    job_type_id: 3,
+    schedule_type_id: 1,
+    reference_number: `${pscName(e.psc)}→${e.client_name.slice(0, 60)}_${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
+    labels: [PSC_DELIVERY_LABEL],
+    delivery_driver_id: e.holder,
+    stops: [{
+      stop_type_id: 3, customer_id: e.client_id, duration: 5,
+      note: e.items.map(deliverTodo).join("\n"),
+      todos: e.items.map((i) => ({ todo_type_id: PHOTO, description: deliverTodo(i), is_required: true })),
+    }],
+  }, env);
+  const jobId = res.ok ? Number(res.body?.data?.job_id) || 0 : 0;
+  if (!jobId) return `KQ/VT - chưa tạo được chuyến giao cho ${e.holder_name ?? "tài xế"} (${res.status}) | ${e.client_name}`;
+  await savePending({ ...e, job_id: jobId, direct: true, smart: undefined, near_pickup: undefined, collector: e.holder, collector_name: e.holder_name, collected_ms: e.collected_ms ?? Date.now(), holder: undefined, holder_name: undefined });
+  await dropPending(e.job_id);
+  return `Job ${jobId} - giao KQ/VT tận nơi: ${e.holder_name ?? "tài xế"} (${why}) | ${e.client_name}`;
 }
 
 /** One job read directly: "gone" only on a 404 (deleted), null when it could not tell. */
@@ -616,22 +628,74 @@ export const smartCollector = (e: KqvtEntry, jobs: Job[], now: number) => pickup
  *  smartCollector); null when none. */
 export function pickupDriverAt(clientId: string, psc: string, jobs: Job[], now: number): { driverId: string; name: string | undefined } | null {
   for (const p of jobs) {
-    if (!pickupAtClient(p, clientId)) continue;
-    const id = p.delivery_driver_id!;
-    let last: { t: number; atPsc: boolean } | null = null, recent = false;
-    for (const j of jobs) {
-      if (j.delivery_driver_id !== id) continue;
-      for (const s of j.stops ?? []) {
-        const t = s.stop_status_id === 4 ? parseVnTimestamp(s.activity_completed_ts).getTime() : NaN;
-        if (!Number.isFinite(t)) continue;
-        const atPsc = s.stop_type_id === 2 && s.customer_id === psc;
-        if (!last || t > last.t) last = { t, atPsc };
-        if (atPsc && now - t <= AT_PSC_RECENT_MS) recent = true;
-      }
-    }
-    if (recent || last?.atPsc) return { driverId: id, name: driverName(p) };
+    if (pickupAtClient(p, clientId) && atPsc(p.delivery_driver_id!, psc, jobs, now)) return { driverId: p.delivery_driver_id!, name: driverName(p) };
   }
   return null;
+}
+
+/** At the PSC now: the driver's last completed stop is a drop-off there, or they
+ *  completed one there in the last AT_PSC_RECENT_MS. */
+export function atPsc(driverId: string, psc: string, jobs: Job[], now: number): boolean {
+  let last: { t: number; here: boolean } | null = null, recent = false;
+  for (const j of jobs) {
+    if (j.delivery_driver_id !== driverId) continue;
+    for (const s of j.stops ?? []) {
+      const t = s.stop_status_id === 4 ? parseVnTimestamp(s.activity_completed_ts).getTime() : NaN;
+      if (!Number.isFinite(t)) continue;
+      const here = s.stop_type_id === 2 && s.customer_id === psc;
+      if (!last || t > last.t) last = { t, here };
+      if (here && now - t <= AT_PSC_RECENT_MS) recent = true;
+    }
+  }
+  return recent || !!last?.here;
+}
+
+/** Road distance under which another client's pickup counts as on the way (2026-11-13). */
+export const NEAR_PICKUP_KM = 1;
+
+/** Jobs still to work, roughly as smart ranking counts them (MAX_OPEN_TASKS): not done,
+ *  not cancelled, not an untouched Cartrack plan slot. ponytail: no window rule. */
+export function openJobs(driverId: string, jobs: Job[]): number {
+  return jobs.filter((j) => j.delivery_driver_id === driverId && j.job_status_id !== 5 && j.job_status_id !== 7 &&
+    (j.stops ?? []).some((s) => s.stop_status_id !== 4 && s.stop_status_id !== 5) &&
+    !(j.last_assigned_plan_id && (j.stops ?? []).every((s) => s.stop_status_id === 1))).length;
+}
+
+/**
+ * Second choice after smartCollector (supervisor, 2026-11-13): a driver at the PSC whose
+ * not-started pickup at ANOTHER client is within NEAR_PICKUP_KM by road of this one, and
+ * who has fewer than MAX_OPEN_TASKS jobs. The nearest such pickup wins. Straight line
+ * first, so only candidates already that close cost a (cached) road lookup.
+ */
+export async function nearCollector(e: KqvtEntry, jobs: Job[], now: number): Promise<{ driverId: string; name: string | undefined } | null> {
+  const at = e.client_at;
+  if (!at) return null;
+  const cands: { job: Job; lat: number; lon: number }[] = [];
+  for (const j of jobs) {
+    const id = j.delivery_driver_id;
+    if (!id || id === PROXY_DRIVER_ID || j.job_status_id === 7 || (j.labels ?? []).includes(PSC_DELIVERY_LABEL)) continue;
+    const s = (j.stops ?? []).find((x) => x.stop_type_id === 1 && x.stop_status_id === 1 && x.customer_id !== e.client_id);
+    if (s?.latitude == null || s.longitude == null) continue;
+    if (haversineKm(at.lat, at.lon, s.latitude, s.longitude) > NEAR_PICKUP_KM) continue;
+    if (!atPsc(id, e.psc, jobs, now) || openJobs(id, jobs) >= MAX_OPEN_TASKS) continue;
+    cands.push({ job: j, lat: s.latitude, lon: s.longitude });
+  }
+  if (!cands.length) return null;
+  const road = await roadDistancesFromPoint(at, cands).catch(() => [] as (null)[]);
+  const best = cands
+    .map((c, i) => ({ c, km: road[i]?.distance_km ?? haversineKm(at.lat, at.lon, c.lat, c.lon) }))
+    .filter((x) => x.km <= NEAR_PICKUP_KM)
+    .sort((a, b) => a.km - b.km)[0];
+  return best ? { driverId: best.c.job.delivery_driver_id!, name: driverName(best.c.job) } : null;
+}
+
+/** The client's position from the master client list; null when unknown. */
+export async function clientPosition(clientId: string): Promise<{ lat: number; lon: number } | null> {
+  const rows = await sbSelect<{ latitude: number | null; longitude: number | null }>(
+    "master_clients_read", `select=latitude,longitude&customer_id=eq.${clientId}&limit=1`,
+  ).catch(() => []);
+  const lat = Number(rows[0]?.latitude), lon = Number(rows[0]?.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lon) && lat && lon ? { lat, lon } : null;
 }
 
 /** Park a smart client's collect job on the proxy driver, so it is not in the
@@ -793,7 +857,17 @@ export async function kqvtCycle(
       // else park it again. Left alone once a real driver holds it.
       const parked = collect && collect !== "gone" ? collect.delivery_driver_id === PROXY_DRIVER_ID : false;
       if (verdict === "wait" && e.smart && collect && collect !== "gone" && (parked || !collect.delivery_driver_id)) {
-        const who = smartCollector(e, jobsToday, now);
+        // The client's own pickup first; else one within NEAR_PICKUP_KM of the client.
+        let who: { driverId: string; name: string | undefined } | null = smartCollector(e, jobsToday, now);
+        let near = false;
+        if (!who) {
+          if (!e.client_at) {
+            const at = await clientPosition(e.client_id);
+            if (at) { e.client_at = at; await savePending(e); }
+          }
+          who = await nearCollector(e, jobsToday, now).catch(() => null);
+          near = !!who;
+        }
         // Release time to 2 minutes ahead first (Cartrack takes no past time): the
         // driver's app hides a job until its release time, and one parked by the old
         // code carries 23:59 (34529199, 12/11).
@@ -802,8 +876,9 @@ export async function kqvtCycle(
         if (who && res && res.status >= 200 && res.status < 300) {
           e.collector = who.driverId;
           e.collector_name = who.name;
+          e.near_pickup = near || undefined;
           await savePending(e);
-          log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${who.name ?? "tài xế"} (đang ở PSC, có chuyến lấy mẫu tại khách) | ${e.psc_name} → ${e.client_name}`, "OK");
+          log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${who.name ?? "tài xế"} (đang ở PSC, có chuyến lấy mẫu ${near ? `cách khách dưới ${NEAR_PICKUP_KM} km` : "tại khách"}) | ${e.psc_name} → ${e.client_name}`, "OK");
         } else if (!parked) {
           await parkCollect(e.job_id, env).catch(() => null);
         }
@@ -818,6 +893,13 @@ export async function kqvtCycle(
     if (e.holder) {
       const target = handoverTarget(e, jobsToday);
       if (target && await attach(e, target)) continue;
+      // Collected by a driver whose pickup is only NEAR the client: no visit there to
+      // hang it on, so the delivery is a job of its own.
+      if (e.near_pickup && e.holder === e.collector) {
+        const line = await deliverFromHolder(e, env, "lấy mẫu gần khách").catch((x) => `KQ/VT - chưa tạo được chuyến giao: ${String(x).slice(0, 120)}`);
+        log(line, line.startsWith("Job") ? "OK" : "WARN");
+        if (line.startsWith("Job")) continue;
+      }
       holders.set(e.client_id, e.holder);
       byClient.set(e.client_id, [...(byClient.get(e.client_id) ?? []), e]);
     }
