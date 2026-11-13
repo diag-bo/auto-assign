@@ -26,6 +26,12 @@ export interface Trial {
   unassigned: number;
   routed: number;
   writes: Record<string, number>;
+  // What the cycle had spent when the fingerprint was taken = the floor a skipped run
+  // would still pay. Process-wide CPU, so a concurrent request can inflate it slightly.
+  fetchCpuMs: number | null;
+  fetchWallMs: number | null;
+  cpu0: NodeJS.CpuUsage;
+  t0: number;
 }
 
 const als = new AsyncLocalStorage<Trial>();
@@ -75,7 +81,10 @@ function install(): void {
 /** Run one cycle inside a trial scope. */
 export async function inTrial<T>(fn: () => Promise<T>): Promise<{ result: T; trial: Trial }> {
   install();
-  const trial: Trial = { fp: null, unassigned: 0, routed: 0, writes: {} };
+  const trial: Trial = {
+    fp: null, unassigned: 0, routed: 0, writes: {},
+    fetchCpuMs: null, fetchWallMs: null, cpu0: process.cpuUsage(), t0: Date.now(),
+  };
   const result = await als.run(trial, fn);
   return { result, trial };
 }
@@ -105,6 +114,9 @@ export function noteFingerprint(unassigned: Job[], routed: Job[], configStamp: s
   const trial = als.getStore();
   if (!trial || trial.fp) return; // first fetch of the cycle is the one a skip would test
   trial.fp = fingerprint(unassigned, routed, configStamp, leave);
+  const cpu = process.cpuUsage(trial.cpu0);
+  trial.fetchCpuMs = Math.round((cpu.user + cpu.system) / 1000);
+  trial.fetchWallMs = Date.now() - trial.t0;
   trial.unassigned = unassigned.length;
   trial.routed = routed.length;
 }
@@ -124,5 +136,7 @@ export async function saveTrial(trial: Trial, env: string, cpuMs: number | null,
     writes: trial.writes,
     cpu_ms: cpuMs,
     wall_ms: wallMs,
+    fetch_cpu_ms: trial.fetchCpuMs,
+    fetch_wall_ms: trial.fetchWallMs,
   }]);
 }

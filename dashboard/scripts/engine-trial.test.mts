@@ -1,6 +1,6 @@
 // Run: npx tsx scripts/engine-trial.test.mts — no network.
 import assert from "node:assert/strict";
-import { classifyRequest, fingerprint, inTrial } from "../src/lib/engine-trial";
+import { classifyRequest, fingerprint, inTrial, noteFingerprint } from "../src/lib/engine-trial";
 import type { Job } from "../src/lib/types";
 
 const RPC = "https://fleetweb-vn.cartrack.com/jsonrpc/index.php";
@@ -24,6 +24,12 @@ const { trial } = await inTrial(async () => {
 });
 await fetch(RPC, { method: "POST", body: rpc("delivery_reject_job") }); // outside: not counted
 assert.deepEqual(trial.writes, { "rpc:delivery_reject_job": 1 });
+assert.equal(trial.fetchCpuMs, null, "no fingerprint taken, no floor recorded");
+
+// The floor is taken when the fingerprint is.
+const { trial: t2 } = await inTrial(async () => { noteFingerprint([], [], "p", []); });
+assert.ok(typeof t2.fetchCpuMs === "number" && t2.fetchCpuMs >= 0);
+assert.ok(typeof t2.fetchWallMs === "number" && t2.fetchWallMs >= 0);
 
 // Order and GPS do not move the fingerprint; a stop status does.
 const job = (id: number, status = 1, lat = 10): Job => ({
