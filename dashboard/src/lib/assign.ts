@@ -2117,7 +2117,7 @@ async function prepareSmart(
 // The configured smart drivers who can be ranked for one job, with on-leave
 // drivers swapped for their substitute where one covers. Shared by the assign
 // loop and the re-check so both rank exactly the same pool.
-function buildSmartPool(
+export function buildSmartPool(
   smartIds: string[],
   allGpsDrivers: Driver[],
   phase1Coords: Map<string, { lat: number; lon: number }>,
@@ -2136,6 +2136,10 @@ function buildSmartPool(
   // failure summary — a driver the engine never tried must not be counted
   // among "N tài xế đều đang nghỉ giải lao/offline".
   const tplCovered: string[] = [];
+  // On leave with nobody covering: never assignable, so dropped here too. Left
+  // in, they have no open jobs, so they alone kept the pool "not all full" and
+  // the open-task cap threw out every working driver (job 34530421, 13/11).
+  const onLeaveNoSub: string[] = [];
   for (const cfgId of smartIds) {
     let cand = driverById.get(cfgId);
     let subFor: string | null = null;
@@ -2146,6 +2150,10 @@ function buildSmartPool(
         tplCovered.push(lc.driverName ?? cfgId);
         continue;                         // 3PL express covers this lane today
       }
+      if (sub.status === "none") {
+        onLeaveNoSub.push(driverDisplayName(lc.driverName) || cfgId);
+        continue;
+      }
       if (sub.status === "ok") {
         const subDriver = driverById.get(sub.subId);
         if (subDriver && phase1Coords.has(sub.subId)) {
@@ -2154,7 +2162,7 @@ function buildSmartPool(
         }
         // sub has no rankable coords → keep cfg driver; assign loop swaps at assign time
       }
-      // clash / none → keep cfg driver; assign loop emits SUB_CLASH / skips
+      // clash → keep cfg driver; assign loop emits SUB_CLASH
     }
     if (!cand) continue;                                // configured driver not in fleet list
     if (!phase1Coords.has(cand.delivery_driver_id)) continue;
@@ -2178,7 +2186,7 @@ function buildSmartPool(
   const fullTag = fullNames.length === 0 ? ""
     : allFull ? ` · cả ${fullNames.length} tài xế đang có ≥${MAX_OPEN_TASKS} việc, chọn người tốt nhất`
     : ` · bỏ qua (đang có ≥${MAX_OPEN_TASKS} việc): ${fullNames.join(", ")}`;
-  return { driverById, subForByDriverId, candidates: pool, tplCovered, fullTag };
+  return { driverById, subForByDriverId, candidates: pool, tplCovered, onLeaveNoSub, fullTag };
 }
 
 // Each candidate's straight-line distance to the pickup and the reference
@@ -3176,7 +3184,7 @@ export async function autoAssignCycle(
         // one's stale location. The on-leave driver stays in the pool only when
         // their sub can't be ranked (clash / no cover / sub has no coords); the
         // assign loop below resolves those the legacy way (swap at assign time).
-        const { driverById, subForByDriverId, candidates, tplCovered, fullTag } =
+        const { driverById, subForByDriverId, candidates, tplCovered, onLeaveNoSub, fullTag } =
           buildSmartPool(smartMapping.smart_driver_id, allGpsDrivers, phase1Coords, leaveEntries, smartOpenTasks);
         if (candidates.length === 0) {
           if (tplCovered.length > 0) {
@@ -3187,6 +3195,11 @@ export async function autoAssignCycle(
             continue;
           }
           const who = jobCustomerName ?? customerId ?? "—";
+          if (onLeaveNoSub.length > 0) {
+            log(`Job ${jobId} - SMART SKIP: ${onLeaveNoSub.join(", ")} on leave, no substitute covers now | ${route}`, "WARN");
+            fail("ON_LEAVE", jobId, who, `${onLeaveNoSub.join(", ")} nghỉ — không có người thay đang trực`, "WARN");
+            continue;
+          }
           log(`Job ${jobId} - SMART skipped: 0/${smartMapping.smart_driver_id.length} configured drivers available (GPS or start_location) | ${route}`, "WARN");
           // A coordinates problem, not an uncovered hour: the drivers are rostered,
           // none of them has a position to rank from. Reported under NO_DRIVER it
