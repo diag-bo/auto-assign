@@ -1,5 +1,6 @@
 import { cancelJobFromTimeline, getJobDetails, getJobsByDate, PROXY_DRIVER_ID } from "./cartrack";
 import { SCHEDULE_JOB_LABEL } from "./schedule-job";
+import { kqvtWaitingFor } from "./kqvt";
 import { parseVnTimestamp, vnDate } from "./time";
 import { claimLateAlert } from "./smart-log-kv";
 import { PICKUP_REMINDER_CLAIM } from "./scheduled-pickup-reminder";
@@ -90,6 +91,14 @@ export async function getPickupReply(customerId: string, text: string, chatId: s
   if (decision === "review") {
     console.warn("[zalo-pickup] needs review", { customerId, chatId, text });
     return `Bot chưa huỷ chuyến lấy mẫu. ${STAFF_CHECK}`;
+  }
+  // KQ/VT waiting for this client rides on the pickup visit (lib/kqvt.ts): keep the trip
+  // and say nothing in the group, so the driver still comes and hands it over
+  // (supervisor, 2026-11-13 — 34530415 was cancelled 12 s after the KQ/VT was given to
+  // its driver). ponytail: an unreadable list cancels as before.
+  if (await kqvtWaitingFor(customerId).catch(() => false)) {
+    console.warn("[zalo-pickup] no samples, kept for KQ/VT", { customerId, chatId, text });
+    return null;
   }
   return cancelScheduledPickup(customerId);
 }

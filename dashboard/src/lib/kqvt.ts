@@ -219,6 +219,11 @@ export async function loadPending(): Promise<KqvtEntry[]> {
   const all = (await r.hgetall<Record<string, unknown>>(KEY)) ?? {};
   return Object.values(all).map((v) => (typeof v === "string" ? JSON.parse(v) : v) as KqvtEntry);
 }
+/** Anything still waiting for this client — not yet handed over, delivered or dropped. */
+export async function kqvtWaitingFor(clientId: string): Promise<boolean> {
+  return (await loadPending()).some((e) => e.client_id === clientId);
+}
+
 export async function savePending(e: KqvtEntry): Promise<void> {
   await redis()?.hset(KEY, { [String(e.job_id)]: JSON.stringify(e) });
 }
