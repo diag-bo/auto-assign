@@ -43,7 +43,8 @@ let cancelOk = true;
 let freshStarted = false;
 const cancel = load('scheduled-pickup-cancel.ts', {
   './time': time, './schedule-job': { SCHEDULE_JOB_LABEL: '📅 Lịch cố định' },
-  './scheduled-pickup-reminder': reminder, './smart-log-kv': { claimLateAlert },
+  './scheduled-pickup-reminder': reminder, './smart-log-kv': { claimLateAlert, pushRunLog: async () => {} },
+  './kqvt': { kqvtGoDirect: async () => [] },
   './cartrack': {
     PROXY_DRIVER_ID: 'proxy', getJobsByDate: async () => jobs,
     getJobDetails: async id => {
@@ -80,10 +81,10 @@ const cancel = load('scheduled-pickup-cancel.ts', {
     jobs = [job(1, '09:30', '08:30'), job(2, '15:00', '14:00')];
     claims.clear(); events.length = 0;
     freshStarted = true;
-    assert.match(await cancel.cancelScheduledPickup(customer), /đã thay đổi trạng thái/);
+    assert.match((await cancel.cancelScheduledPickup(customer)).text, /đã thay đổi trạng thái/);
     assert.deepEqual(events, [], 'fresh started pickup must not cancel or suppress');
     freshStarted = false; cancelOk = false;
-    assert.match(await cancel.cancelScheduledPickup(customer), /Không huỷ được/);
+    assert.match((await cancel.cancelScheduledPickup(customer)).text, /Không huỷ được/);
     assert.deepEqual(events, ['cancel:1'], 'failed cancellation must not suppress a valid reminder');
     cancelOk = true;
     const released = { ...jobs[0], delivery_driver_id: 'real-driver' };

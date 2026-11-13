@@ -219,11 +219,6 @@ export async function loadPending(): Promise<KqvtEntry[]> {
   const all = (await r.hgetall<Record<string, unknown>>(KEY)) ?? {};
   return Object.values(all).map((v) => (typeof v === "string" ? JSON.parse(v) : v) as KqvtEntry);
 }
-/** Anything still waiting for this client — not yet handed over, delivered or dropped. */
-export async function kqvtWaitingFor(clientId: string): Promise<boolean> {
-  return (await loadPending()).some((e) => e.client_id === clientId);
-}
-
 export async function savePending(e: KqvtEntry): Promise<void> {
   await redis()?.hset(KEY, { [String(e.job_id)]: JSON.stringify(e) });
 }
@@ -473,6 +468,45 @@ export async function convertToDirect(jobId: number, env: Env): Promise<{ ok: tr
   });
   await dropPending(jobId);
   return { ok: true, jobId: res.jobId, client: e.client_name };
+}
+
+/**
+ * The client said "no samples" and their pickup was cancelled (supervisor, 2026-11-13):
+ * the KQ/VT waiting for them loses the visit it would have ridden, so it goes on its own.
+ * Not yet collected → convertToDirect (PSC → client). Already collected → a one-stop
+ * "Giao KQ/VT" job at the client for whoever holds the items. Still travelling multi-leg
+ * → left alone (no job yet). Returns a run-log line per item.
+ */
+export async function kqvtGoDirect(clientId: string, env: Env): Promise<string[]> {
+  const out: string[] = [];
+  for (const e of (await loadPending()).filter((x) => x.client_id === clientId && x.job_id > 0 && !x.direct)) {
+    if (!e.holder) {
+      const r = await convertToDirect(e.job_id, env);
+      out.push(r.ok ? `Job ${e.job_id} → Job ${r.jobId} - KQ/VT giao tận nơi (khách báo không có mẫu) | ${e.client_name}`
+        : `Job ${e.job_id} - KQ/VT chưa đổi được thành giao tận nơi: ${r.error} | ${e.client_name}`);
+      continue;
+    }
+    const { hours, minutes } = vnHoursMinutes();
+    const res = await createJob({
+      job_type_id: 3,
+      schedule_type_id: 1,
+      reference_number: `${pscName(e.psc)}→${e.client_name.slice(0, 60)}_${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
+      labels: [PSC_DELIVERY_LABEL],
+      delivery_driver_id: e.holder,
+      stops: [{
+        stop_type_id: 3, customer_id: e.client_id, duration: 5,
+        note: e.items.map(deliverTodo).join("\n"),
+        todos: e.items.map((i) => ({ todo_type_id: PHOTO, description: deliverTodo(i), is_required: true })),
+      }],
+    }, env);
+    const jobId = res.ok ? Number(res.body?.data?.job_id) || 0 : 0;
+    if (!jobId) { out.push(`KQ/VT - chưa tạo được chuyến giao cho ${e.holder_name ?? "tài xế"} (${res.status}) | ${e.client_name}`); continue; }
+    // Followed from here as a direct job already collected: done when the stop is.
+    await savePending({ ...e, job_id: jobId, direct: true, smart: undefined, collector: e.holder, collector_name: e.holder_name, collected_ms: e.collected_ms ?? Date.now(), holder: undefined, holder_name: undefined });
+    await dropPending(e.job_id);
+    out.push(`Job ${jobId} - giao KQ/VT tận nơi: ${e.holder_name ?? "tài xế"} (khách báo không có mẫu) | ${e.client_name}`);
+  }
+  return out;
 }
 
 /** One job read directly: "gone" only on a 404 (deleted), null when it could not tell. */

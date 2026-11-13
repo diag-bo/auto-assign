@@ -1,8 +1,8 @@
 import { cancelJobFromTimeline, getJobDetails, getJobsByDate, PROXY_DRIVER_ID } from "./cartrack";
 import { SCHEDULE_JOB_LABEL } from "./schedule-job";
-import { kqvtWaitingFor } from "./kqvt";
-import { parseVnTimestamp, vnDate } from "./time";
-import { claimLateAlert } from "./smart-log-kv";
+import { kqvtGoDirect } from "./kqvt";
+import { parseVnTimestamp, vnDate, vnTimestamp } from "./time";
+import { claimLateAlert, pushRunLog } from "./smart-log-kv";
 import { PICKUP_REMINDER_CLAIM } from "./scheduled-pickup-reminder";
 import type { Job } from "./types";
 
@@ -92,15 +92,15 @@ export async function getPickupReply(customerId: string, text: string, chatId: s
     console.warn("[zalo-pickup] needs review", { customerId, chatId, text });
     return `Bot chưa huỷ chuyến lấy mẫu. ${STAFF_CHECK}`;
   }
-  // KQ/VT waiting for this client rides on the pickup visit (lib/kqvt.ts): keep the trip
-  // and say nothing in the group, so the driver still comes and hands it over
-  // (supervisor, 2026-11-13 — 34530415 was cancelled 12 s after the KQ/VT was given to
-  // its driver). ponytail: an unreadable list cancels as before.
-  if (await kqvtWaitingFor(customerId).catch(() => false)) {
-    console.warn("[zalo-pickup] no samples, kept for KQ/VT", { customerId, chatId, text });
-    return null;
+  const { text: reply, cancelled } = await cancelScheduledPickup(customerId);
+  // KQ/VT waiting for this client rode on that visit (lib/kqvt.ts): it goes on its own
+  // now (supervisor, 2026-11-13 — 34530415 was cancelled 12 s after the KQ/VT was given
+  // to its driver, who then held the items with nowhere to deliver them).
+  if (cancelled) {
+    const lines = await kqvtGoDirect(customerId, "prod").catch((e) => [`KQ/VT - không đổi được sau khi huỷ chuyến: ${String(e).slice(0, 120)}`]);
+    if (lines.length) await pushRunLog(lines.map((msg) => ({ ts: vnTimestamp(), level: "INFO" as const, msg }))).catch(() => {});
   }
-  return cancelScheduledPickup(customerId);
+  return reply;
 }
 
 export function cancelableScheduleJobs(jobs: Job[], today: string, customerId: string, currentOnly = false, now = Date.now()): Job[] {
@@ -139,29 +139,30 @@ export function pickupCancellationCandidates(jobs: Job[], today: string, custome
 }
 
 /** Cancel exactly one current or upcoming unstarted fixed pickup for this customer. */
-export async function cancelScheduledPickup(customerId: string): Promise<string> {
+export async function cancelScheduledPickup(customerId: string): Promise<{ text: string; cancelled: boolean }> {
+  const no = (text: string) => ({ text, cancelled: false });
   try {
     const today = vnDate();
     const candidates = pickupCancellationCandidates(await getJobsByDate(today, "prod"), today, customerId);
     if (candidates.length !== 1) {
-      return candidates.length === 0
+      return no(candidates.length === 0
         ? "Hiện không có chuyến lấy mẫu cố định nào đủ điều kiện huỷ."
-        : `Có nhiều chuyến đang chờ nên bot chưa huỷ. ${STAFF_CHECK}`;
+        : `Có nhiều chuyến đang chờ nên bot chưa huỷ. ${STAFF_CHECK}`);
     }
     // Recheck the pickup immediately before cancelling; the day list can lag.
     const current = await getJobDetails(candidates[0].job_id, "prod");
     if (cancelableScheduleJobs(current.data ? [current.data] : [], today, customerId).length !== 1) {
-      return `Chuyến đã thay đổi trạng thái nên bot chưa huỷ. ${STAFF_CHECK}`;
+      return no(`Chuyến đã thay đổi trạng thái nên bot chưa huỷ. ${STAFF_CHECK}`);
     }
     if (!(await cancelJobFromTimeline(candidates[0].job_id, today, "prod"))) {
-      return `Bot chưa huỷ được chuyến. ${STAFF_CHECK}`;
+      return no(`Bot chưa huỷ được chuyến. ${STAFF_CHECK}`);
     }
     // Consume the existing reminder claim so even a stale release list stays silent.
     await claimLateAlert(candidates[0].job_id, "prod", 86400, PICKUP_REMINDER_CLAIM)
       .catch(error => console.error("[zalo-pickup] cancelled, reminder suppression failed", error));
-    return `Đã huỷ chuyến lấy mẫu cố định hôm nay (Job #${candidates[0].job_id}).`;
+    return { text: `Đã huỷ chuyến lấy mẫu cố định hôm nay (Job #${candidates[0].job_id}).`, cancelled: true };
   } catch (error) {
     console.error("[zalo-pickup] cancellation failed", error);
-    return `Bot chưa kiểm tra được chuyến. ${STAFF_CHECK}`;
+    return no(`Bot chưa kiểm tra được chuyến. ${STAFF_CHECK}`);
   }
 }
