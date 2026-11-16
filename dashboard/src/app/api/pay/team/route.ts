@@ -111,15 +111,22 @@ export async function GET(req: NextRequest) {
     }
 
     const wantLines = (id: string) => detailFor === "all" || id === detailFor;
+    // ONE driver opened: read only their rows. The month was recomputed for all
+    // ~83 drivers to return one driver's days, so every expand cost a full load.
+    // Every figure here is per driver-day; the twin, covered-leave and shift
+    // lookups that cross accounts are pay-days' own (the same load Thu Nhập uses).
+    // Totals and coverage in this reply are then that driver's — the row reads days only.
+    const one = detailFor && detailFor !== "all" ? detailFor : undefined;
+    const who = one ? `&driver_id=eq.${one}` : "";
     const [daily, punches, sealed, legsDaily, inputs, geofence, reviewRows, noShiftRows] = await Promise.all([
       sbSelectAll<DailyRow>(
         "v_pay_daily",
-        `select=*&trip_date=gte.${from}&trip_date=lte.${to}`,
+        `select=*&trip_date=gte.${from}&trip_date=lte.${to}${who}`,
         "trip_date.asc,driver_id.asc",
       ),
       sbSelectAll<PayPunch>(
         "pay_punches",
-        `select=*&trip_date=gte.${from}&trip_date=lte.${to}`,
+        `select=*&trip_date=gte.${from}&trip_date=lte.${to}${who}`,
         "id.asc",
       ),
       sbSelectAll<{ trip_date: string }>(
@@ -136,25 +143,25 @@ export async function GET(req: NextRequest) {
       // ~28,000 legs behind them.
       sbSelectAll<{ driver_id: string; total_km: number | string | null }>(
         "v_tat_daily",
-        `select=driver_id,total_km&trip_date=gte.${from}&trip_date=lte.${to}`,
+        `select=driver_id,total_km&trip_date=gte.${from}&trip_date=lte.${to}${who}`,
         "trip_date.asc,driver_id.asc",
       ),
       // Shifts (Lịch ca) and approved "cập nhật công" — see lib/pay-days.ts.
-      loadPayDayInputs(from, to),
+      loadPayDayInputs(from, to, one),
       // "Mở Geofence": a stop unlocked to be completed away from its location.
       sbSelectAll<{ driver_id: string | null; occurred_at: string }>(
         "master_action_logs",
-        `select=driver_id,occurred_at&action=eq.${encodeURIComponent("Mở Geofence Log")}&occurred_at=gte.${from}T00:00:00%2B07:00&occurred_at=lte.${to}T23:59:59%2B07:00`,
+        `select=driver_id,occurred_at&action=eq.${encodeURIComponent("Mở Geofence Log")}&occurred_at=gte.${from}T00:00:00%2B07:00&occurred_at=lte.${to}T23:59:59%2B07:00${who}`,
         "id.asc"),
       // The supervisor's ruling on a "Nghi vấn" day (ok / cut to given hours).
       sbSelectAll<{ driver_id: string; trip_date: string; verdict: "ok" | "cut"; in_time: string | null; out_time: string | null; note: string }>(
         "pay_suspect_reviews",
-        `select=driver_id,trip_date,verdict,in_time,out_time,note&trip_date=gte.${from}&trip_date=lte.${to}`,
+        `select=driver_id,trip_date,verdict,in_time,out_time,note&trip_date=gte.${from}&trip_date=lte.${to}${who}`,
         "trip_date.asc"),
       // "Không duyệt" on a "Không ca" day: left unpaid, off the open count.
       sbSelectAll<{ driver_id: string; trip_date: string }>(
         "pay_no_shift_reviews",
-        `select=driver_id,trip_date&trip_date=gte.${from}&trip_date=lte.${to}`,
+        `select=driver_id,trip_date&trip_date=gte.${from}&trip_date=lte.${to}${who}`,
         "trip_date.asc"),
     ]);
     const noShiftRejected = new Set(noShiftRows.map((r) => dayKey(r.driver_id, r.trip_date)));
