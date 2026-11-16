@@ -176,7 +176,7 @@ function SuspectRow({ r, onChanged }: { r: SuspectDay; onChanged: () => void }) 
   }
   const btn = "rounded border px-2 py-0.5 text-xs font-semibold disabled:opacity-50";
   return (
-    <tr className={r.review ? "text-slate-400" : ""}>
+    <tr className={r.review ? "text-slate-500" : ""}>
       <td className="px-3 py-1.5 whitespace-nowrap">{r.date.slice(8, 10)}/{r.date.slice(5, 7)}</td>
       <td className="px-2 py-1.5"><DriverName full={r.driver_name} className={r.review ? "" : "text-slate-800"} /></td>
       <td className="px-2 py-1.5">{r.shift}</td>
@@ -263,7 +263,7 @@ function DriverDays({ month, driverId, total }: { month: string; driverId: strin
       <table className="w-auto text-xs bg-white border border-slate-200">
         {/* Sticky stack while a driver is open: month header (h-9 = 36px) → the
           driver's row (h-10 = 40px) → this header at 76px. */}
-        <thead className={`sticky top-[76px] z-[5] bg-slate-100 text-left text-[11px] text-slate-500`}>
+        <thead className="sticky top-[76px] z-[5] bg-slate-100 text-left text-xs text-slate-600">
           <tr>
             <th className="px-3 py-1 font-semibold">Ngày</th>
             <th className="px-3 py-1 font-semibold">Ca</th>
@@ -279,7 +279,7 @@ function DriverDays({ month, driverId, total }: { month: string; driverId: strin
         <tbody className="divide-y divide-slate-100 tabular-nums">
           {days.map((d) => (
             <tr key={d.date} className={d.no_shift ? "bg-amber-50" : d.late_mins > LATE_FLAG || d.suspect.length ? "bg-rose-50" : ""}>
-              <td className="px-3 py-1 whitespace-nowrap">{d.date.slice(8, 10)}/{d.date.slice(5, 7)} <span className="text-slate-400">{["CN", "T2", "T3", "T4", "T5", "T6", "T7"][new Date(`${d.date}T00:00:00Z`).getUTCDay()]}</span></td>
+              <td className="px-3 py-1 whitespace-nowrap">{d.date.slice(8, 10)}/{d.date.slice(5, 7)} <span className="text-slate-600">{["CN", "T2", "T3", "T4", "T5", "T6", "T7"][new Date(`${d.date}T00:00:00Z`).getUTCDay()]}</span></td>
               <td className="px-3 py-1 whitespace-nowrap">{shiftText(d) || <span className="text-amber-700">Không ca</span>}</td>
               <td className="px-3 py-1 whitespace-nowrap">{span(d.tap_in, d.tap_out)}</td>
               <td className="px-3 py-1 whitespace-nowrap">{span(d.first_task, d.last_task)}</td>
@@ -287,7 +287,7 @@ function DriverDays({ month, driverId, total }: { month: string; driverId: strin
               <td className="px-3 py-1 text-right">{fmtHours(d.worked_mins)}</td>
               <td className="px-3 py-1 text-right whitespace-nowrap">{d.jobs} · {vnd.format(d.km)}</td>
               <td className="px-3 py-1 text-right font-medium text-slate-800" title={`${fmtVnd(d.hour_pay)} giờ + ${fmtVnd(d.km_pay)} km`}>{vnd.format(Math.round(d.hour_pay + d.km_pay))}</td>
-              <td className="px-3 py-1 text-[11px] whitespace-nowrap">
+              <td className="px-3 py-1 whitespace-nowrap">
                 {([
                   d.corrected && ["Đã duyệt", "text-indigo-700", "Giờ theo cập nhật công đã duyệt"],
                   d.no_shift_rejected && ["Không duyệt", "text-slate-600", "Ngày làm không có ca — quản lý chọn không tính tiền giờ"],
@@ -297,7 +297,7 @@ function DriverDays({ month, driverId, total }: { month: string; driverId: strin
                   d.late_mins > LATE_FLAG && [`Vào trễ ${fmtHours(d.late_mins)}`, "text-rose-700", "Bắt đầu trễ hơn 45 phút so với giờ vào ca — kiểm tra lại ca"],
                   d.multiplier > 1 && [`Lễ ×${d.multiplier}`, "text-indigo-700", "Ngày lễ: giờ tính gấp ba"],
                 ].filter(Boolean) as [string, string, string][]).map(([text, cls, why], i) => (
-                  <span key={text}>{i > 0 && <span className="text-slate-400" aria-hidden> · </span>}<span className={cls} title={why || undefined}>{text}</span></span>
+                  <span key={text}>{i > 0 && <span className="text-slate-500" aria-hidden> · </span>}<span className={cls} title={why || undefined}>{text}</span></span>
                 ))}
               </td>
             </tr>
@@ -576,7 +576,7 @@ export function PayTeamPanel() {
           ].map(([label, value, hint]) => (
             <div key={label} className="bg-white px-2 py-2 text-center" title={hint || undefined}>
               <p className="text-base font-bold text-slate-800 leading-tight">{value}</p>
-              <p className="text-[11px] text-slate-500">{label}</p>
+              <p className="text-xs text-slate-600">{label}</p>
             </div>
           ))}
         </div>
@@ -704,7 +704,7 @@ export function PayTeamPanel() {
             <p className="py-16 text-center text-sm text-slate-500">Không có ngày nào nghi vấn kéo dài giờ trong kỳ này.</p>
           ) : (
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wide">
+            <thead className="sticky top-0 bg-slate-50 text-slate-600 text-xs">
               <tr>
                 <th className="text-left font-semibold px-3 py-2">Ngày</th>
                 <th className="text-left font-semibold px-2 py-2">Tài xế</th>
@@ -756,7 +756,7 @@ export function PayTeamPanel() {
             <span>{error}</span>
           </div>
         ) : !data || data.drivers.length === 0 ? (
-          <p className="text-center text-sm text-slate-400 py-16">
+          <p className="text-center text-sm text-slate-500 py-16">
             Chưa có dữ liệu cho {monthLabel(month)}.
           </p>
         ) : shown.length === 0 ? (
@@ -766,7 +766,7 @@ export function PayTeamPanel() {
         ) : (
           // Capped: on a wide screen the name and its last figure sat ~1,900px apart.
           <table className="w-full max-w-6xl text-sm">
-            <thead className="sticky top-0 z-20 bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wide">
+            <thead className="sticky top-0 z-20 bg-slate-50 text-slate-600 text-xs">
               <tr className="h-9">
                 <th className="text-left font-semibold px-3 py-2">Tài xế</th>
                 {/* The to-do counts sit beside the name they belong to; the figures
@@ -801,7 +801,7 @@ export function PayTeamPanel() {
                         personal name, and pay is filed against the ACCOUNT. */}
                     <DriverName full={d.driver_name} className="font-medium text-slate-800" />
                     {d.bo_pay > 0 && (
-                      <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700" title="Có giờ BO Runner (35.000đ/giờ) — khung BO ghi ở cột Ca của từng ngày">BO Runner</span>
+                      <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700" title="Có giờ BO Runner (35.000đ/giờ) — khung BO ghi ở cột Ca của từng ngày">BO Runner</span>
                     )}
                   </td>
                   <td className="text-center px-2 py-2 tabular-nums">
@@ -846,21 +846,37 @@ export function PayTeamPanel() {
       </div>
       )}
 
-      {/* The rule, stated once, where the numbers are. */}
+      {/* The rule and the column meanings, stated once where the numbers are —
+          folded, because it is reference, not something to read every visit, and
+          open-able by keyboard and touch where a title tooltip is not. */}
       {data && view === "pay" && (
-        <div className="px-3 py-2 border-t border-slate-200 shrink-0">
-          <p className="text-[11px] text-slate-500">
-            {vnd.format(data.rates.per_hour)}đ/giờ theo Lịch ca: bắt đầu từ lúc chấm công vào
-            (không có thì chuyến lấy mẫu đầu tiên), không sớm hơn giờ vào ca; kết thúc lúc chấm công ra
-            hoặc chuyến cuối, lấy giờ trễ hơn, không quá hết ca trừ khi còn chuyến. Ngày lễ ×3. BO Runner
-            35.000đ/giờ (Anh Tú 6h–15h thứ 2–7, Mộng Hoa cả ca). +{" "}
-            {vnd.format(data.rates.per_km)}đ/km lấy mẫu → giao mẫu của mỗi chuyến đã hoàn thành.{" "}
-            <em>đ/km thực</em> = (tiền giờ + tiền km, không tính giờ BO Runner) ÷ quãng đường thực chạy — gồm cả đoạn di chuyển
-            giữa các chuyến, đường về và chuyến không tính tiền. Đây là chi phí thật cho mỗi km,
-            không so trực tiếp được với mức {vnd.format(data.rates.per_km)}đ/km.
-            Kỳ lương từ {data.from} đến {data.to}. Tải CSV để lấy số chính xác.
-          </p>
-        </div>
+        <details className="border-t border-slate-200 shrink-0">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-slate-500">
+            Cách tính lương và ý nghĩa các cột
+          </summary>
+          <dl className="max-h-56 overflow-auto px-3 pb-3 grid gap-x-4 gap-y-1.5 text-xs text-slate-700 sm:grid-cols-[max-content_minmax(0,72ch)]">
+            <dt className="font-semibold">Tiền giờ</dt>
+            <dd>{vnd.format(data.rates.per_hour)}đ/giờ theo Lịch ca: bắt đầu từ lúc chấm công vào (không có thì chuyến lấy mẫu đầu tiên), không sớm hơn giờ vào ca; kết thúc lúc chấm công ra hoặc chuyến cuối, lấy giờ trễ hơn, không quá hết ca trừ khi còn chuyến. Ngày lễ ×3.</dd>
+            <dt className="font-semibold">BO Runner</dt>
+            <dd>35.000đ/giờ — Anh Tú 6h–15h thứ 2–7, Mộng Hoa cả ca. Khung BO ghi ở cột Ca của từng ngày.</dd>
+            <dt className="font-semibold">Tiền km</dt>
+            <dd>{vnd.format(data.rates.per_km)}đ/km lấy mẫu → giao mẫu của mỗi chuyến đã hoàn thành.</dd>
+            <dt className="font-semibold">Km tính tiền</dt>
+            <dd>Quãng đường lấy mẫu → giao mẫu của các chuyến được tính tiền.</dd>
+            <dt className="font-semibold">Km thực</dt>
+            <dd>Quãng đường thực tế đã chạy, gồm cả đoạn di chuyển giữa các chuyến, đường về và chuyến không tính tiền (theo Hiệu Suất).</dd>
+            <dt className="font-semibold">đ/km thực</dt>
+            <dd>(Tiền giờ + tiền km, không tính giờ BO Runner) ÷ km thực. Đây là chi phí thật cho mỗi km, không so trực tiếp được với mức {vnd.format(data.rates.per_km)}đ/km.</dd>
+            <dt className="font-semibold">Không ca</dt>
+            <dd>Ngày có làm nhưng không có ca trong Lịch ca — không tính tiền giờ cho đến khi được duyệt.</dd>
+            <dt className="font-semibold">Vào trễ</dt>
+            <dd>Ngày bắt đầu trễ hơn 45 phút so với giờ vào ca — thường là ca trong Lịch ca chưa đúng.</dd>
+            <dt className="font-semibold">Nghi vấn</dt>
+            <dd>Ngày có dấu hiệu kéo dài giờ: chuyến cuối chậm bất thường, hoàn thành sau khi chấm công ra, hoặc mở geofence.</dd>
+            <dt className="font-semibold">Giờ tô vàng</dt>
+            <dd>Trong cột Tính giờ của từng ngày: đầu hoặc cuối khác giờ ca. Rê chuột lên để xem lệch bao nhiêu.</dd>
+          </dl>
+        </details>
       )}
     </div>
   );

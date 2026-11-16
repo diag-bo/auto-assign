@@ -99,7 +99,7 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
           <p className="py-16 text-center text-sm text-slate-500">Không còn ngày nào làm không có ca.</p>
         ) : (
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-600">
+            <thead className="sticky top-0 bg-slate-50 text-xs text-slate-600">
               <tr>
                 <th className="w-8 px-3 py-2">
                   <input
@@ -171,7 +171,7 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
         )}
         {rejected.length > 0 && (
           <section className="border-t border-slate-200 px-3 py-2">
-            <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Không duyệt — không tính tiền giờ ({rejected.length})</h3>
+            <h3 className="mb-1 text-xs font-semibold text-slate-600">Không duyệt — không tính tiền giờ ({rejected.length})</h3>
             <ul className="divide-y divide-slate-100 text-sm text-slate-500">
               {rejected.map((d) => (
                 <li key={keyOf(d)} className="flex items-center gap-3 py-1">
