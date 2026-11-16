@@ -1,12 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Banknote, Bot, Contact, CalendarClock, CalendarDays, ChevronDown, ClipboardList, Clock3, Gauge, MapPin, NotebookText, RefreshCw, Search, Settings2, Truck, UserPlus } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, Contact, CalendarClock, CalendarDays, ChevronDown, ClipboardList, Clock3, Gauge, MapPin, NotebookText, Power, RefreshCw, Search, Settings2, Truck, UserPlus } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { RemovedCartrackClients } from "./removed-cartrack-clients";
 import { DataSourceIcon } from "./data-source-icon";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { ServiceStatus } from "./stats-sidebar";
 import { ActivityLog } from "./activity-log";
 import { ScheduleListPanel } from "./schedule-list-panel";
@@ -701,7 +700,7 @@ export function Dashboard() {
       {/* Header — wraps to multiple rows on narrow screens */}
       <header className="bg-slate-900 text-white px-3 sm:px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-2 justify-between shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-base sm:text-lg font-semibold truncate">Fleet Auto-Assign</h1>
+          <h1 className="text-base 2xl:text-lg font-semibold truncate">Fleet Auto-Assign</h1>
           {/* Minimal Service: just the heartbeat */}
           <ServiceStatus
             mappingCount={mappingCount}
@@ -712,8 +711,11 @@ export function Dashboard() {
         </div>
 
         {/* The main menu lives IN the header bar: as a row of its own under it, it
-            cost every tab ~55px of height before any content. */}
-        <nav aria-label="Điều hướng chính" className="order-last basis-full lg:order-none lg:basis-auto lg:flex-1 min-w-0 flex items-center gap-1 overflow-x-auto overflow-y-hidden">
+            cost every tab ~55px of height before any content. One line from xl
+            (1280px) up; below that the menu takes the bar's SECOND line, under the
+            title and controls — letting the controls wrap instead left them alone
+            on a line of their own with an empty half-bar beside them. */}
+        <nav aria-label="Điều hướng chính" className="order-last basis-full xl:order-none xl:basis-auto xl:flex-1 min-w-0 flex items-center gap-1 overflow-x-auto overflow-y-hidden">
             <button aria-pressed={rightTab === "attention"} onClick={() => setRightTab("attention")} className={navBtn(rightTab === "attention")}>
               <AlertTriangle aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
               Cần xử lý
@@ -740,17 +742,27 @@ export function Dashboard() {
             </button>
         </nav>
         <div className="flex items-center gap-3 sm:gap-4 ml-auto">
-          {/* Auto-Assign switch */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs sm:text-sm text-slate-300">Tự động</span>
-            <Switch checked={isRunning} onCheckedChange={toggleService} />
-          </div>
+          {/* Auto-assign on/off: ONE power button whose colour is the engine's
+              state (green = running, red = off) — it replaced a "Tự động" label
+              plus a switch to keep the bar on one line. Same one-click toggle;
+              the state is in aria-pressed and the label, not in colour alone. */}
+          <button
+            type="button"
+            aria-pressed={isRunning}
+            aria-label={isRunning ? "Tự động gán: đang bật — bấm để tắt" : "Tự động gán: đang tắt — bấm để bật"}
+            title={isRunning ? "Tự động gán: đang bật — bấm để tắt" : "Tự động gán: đang tắt — bấm để bật"}
+            onClick={() => toggleService(!isRunning)}
+            className={`grid size-9 shrink-0 place-items-center rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
+              isRunning ? "border-emerald-400 bg-emerald-600 text-white hover:bg-emerald-500" : "border-red-400 bg-red-600 text-white hover:bg-red-500"}`}
+          >
+            <Power aria-hidden="true" className="size-4" strokeWidth={2.25} />
+          </button>
 
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <Button variant="outline" size="sm" className="h-9 gap-2 text-slate-900" disabled={!!syncingSource || syncingMisa}>
                 <RefreshCw aria-hidden="true" className={`size-4 ${syncingSource || syncingMisa ? "motion-safe:animate-spin" : ""}`} />
-                {syncingSource || syncingMisa ? "Đang đồng bộ…" : "Đồng Bộ Thông Tin"}
+                {syncingSource || syncingMisa ? "Đang đồng bộ…" : <><span className="2xl:hidden">Đồng bộ</span><span className="hidden 2xl:inline">Đồng Bộ Thông Tin</span></>}
                 <ChevronDown aria-hidden="true" className="size-3.5 text-slate-500" />
               </Button>
             </DropdownMenu.Trigger>
