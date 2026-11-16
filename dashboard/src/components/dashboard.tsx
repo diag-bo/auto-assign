@@ -682,6 +682,12 @@ export function Dashboard() {
   const setupActive = ["config", "schedule", "shifts", "drivers", "sunday", "locations", "tpl", "bots", "newcustomer"].includes(rightTab);
   const operationsActive = rightTab === "distance" || rightTab === "tat";
 
+  /** Main menu, on the dark header bar. Icons only from 2xl: at 1280–1536px
+   *  they are what pushed the bar onto a second line. */
+  const navBtn = (active: boolean) =>
+    `min-h-9 px-2.5 text-xs font-semibold rounded transition-colors flex items-center gap-1.5 whitespace-nowrap [&>svg]:hidden 2xl:[&>svg]:block focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white ${
+      active ? "bg-white text-slate-900" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+    }`;
   const tabBtn = (active: boolean) =>
     `min-h-10 px-3 py-2 text-xs font-semibold rounded transition-colors border flex items-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
       active
@@ -693,7 +699,7 @@ export function Dashboard() {
     <div className="flex flex-col min-h-screen lg:h-screen">
 
       {/* Header — wraps to multiple rows on narrow screens */}
-      <header className="bg-slate-900 text-white px-3 sm:px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 justify-between shrink-0">
+      <header className="bg-slate-900 text-white px-3 sm:px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-2 justify-between shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <h1 className="text-base sm:text-lg font-semibold truncate">Fleet Auto-Assign</h1>
           {/* Minimal Service: just the heartbeat */}
@@ -705,6 +711,34 @@ export function Dashboard() {
           />
         </div>
 
+        {/* The main menu lives IN the header bar: as a row of its own under it, it
+            cost every tab ~55px of height before any content. */}
+        <nav aria-label="Điều hướng chính" className="order-last basis-full lg:order-none lg:basis-auto lg:flex-1 min-w-0 flex items-center gap-1 overflow-x-auto overflow-y-hidden">
+            <button aria-pressed={rightTab === "attention"} onClick={() => setRightTab("attention")} className={navBtn(rightTab === "attention")}>
+              <AlertTriangle aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
+              Cần xử lý
+              {attentionCount > 0 && (
+                <span className="rounded-full bg-red-600 text-white px-1.5 leading-none py-0.5 text-[11px] font-bold">
+                  {attentionCount}
+                </span>
+              )}
+            </button>
+            <button aria-pressed={rightTab === "live"} onClick={() => setRightTab("live")} className={navBtn(rightTab === "live")}>
+              <NotebookText aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Nhật ký
+            </button>
+            <button aria-pressed={rightTab === "batch"} onClick={() => setRightTab("batch")} className={navBtn(rightTab === "batch")}>
+              <Search aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Tra cứu VID / Batch
+            </button>
+            <button aria-pressed={setupActive} onClick={() => { if (!setupActive) setRightTab("config"); }} className={navBtn(setupActive)}>
+              <Settings2 aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Master Setup
+            </button>
+            <button aria-pressed={operationsActive} onClick={() => { if (!operationsActive) setRightTab("distance"); }} className={navBtn(operationsActive)}>
+              <Gauge aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Khoảng cách &amp; Hiệu suất
+            </button>
+            <button aria-pressed={rightTab === "pay"} onClick={() => setRightTab("pay")} className={navBtn(rightTab === "pay")}>
+              <Banknote aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Lương PT
+            </button>
+        </nav>
         <div className="flex items-center gap-3 sm:gap-4 ml-auto">
           {/* Auto-Assign switch */}
           <div className="flex items-center gap-2">
@@ -784,32 +818,6 @@ export function Dashboard() {
               </div>}
             </details>
           )}
-          <nav aria-label="Điều hướng chính" className="flex flex-wrap items-center gap-1 shrink-0">
-            <button aria-pressed={rightTab === "attention"} onClick={() => setRightTab("attention")} className={tabBtn(rightTab === "attention")}>
-              <AlertTriangle aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
-              Cần xử lý
-              {attentionCount > 0 && (
-                <span className="rounded-full bg-red-600 text-white px-1.5 leading-none py-0.5 text-[11px] font-bold">
-                  {attentionCount}
-                </span>
-              )}
-            </button>
-            <button aria-pressed={rightTab === "live"} onClick={() => setRightTab("live")} className={tabBtn(rightTab === "live")}>
-              <NotebookText aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Nhật ký
-            </button>
-            <button aria-pressed={rightTab === "batch"} onClick={() => setRightTab("batch")} className={tabBtn(rightTab === "batch")}>
-              <Search aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Tra cứu VID / Batch
-            </button>
-            <button aria-pressed={setupActive} onClick={() => { if (!setupActive) setRightTab("config"); }} className={tabBtn(setupActive)}>
-              <Settings2 aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Master Setup
-            </button>
-            <button aria-pressed={operationsActive} onClick={() => { if (!operationsActive) setRightTab("distance"); }} className={tabBtn(operationsActive)}>
-              <Gauge aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Khoảng cách &amp; Hiệu suất
-            </button>
-            <button aria-pressed={rightTab === "pay"} onClick={() => setRightTab("pay")} className={tabBtn(rightTab === "pay")}>
-              <Banknote aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Lương PT
-            </button>
-          </nav>
           {setupActive && <nav aria-label="Master Setup" className="flex flex-wrap items-center gap-1 shrink-0 border-b border-slate-200 pb-1.5">
             {([
               ["config", ClipboardList, "Config"], ["schedule", CalendarClock, "Lịch cố định"],
