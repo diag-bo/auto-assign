@@ -209,8 +209,35 @@ function SuspectRow({ r, onChanged }: { r: SuspectDay; onChanged: () => void }) 
 }
 const span = (a: string | null, b: string | null) => (a || b ? `${a ?? "?"}–${b ?? "?"}` : "—");
 
+const hm = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const shiftWindows = (d: DayLine) => (d.parts ?? []).filter((p) => p.shift_in && p.shift_out);
+/** The day's shift as rostered, the BO Runner window marked: a 06:00 paid start
+ *  under a 15:00 shift explains itself instead of needing a note on every row. */
+const shiftText = (d: DayLine) => {
+  const wins = shiftWindows(d);
+  return wins.length ? wins.map((p) => `${p.shift_in}–${p.shift_out}${p.kind === "BO Runner" ? " BO" : ""}`).join(" · ") : d.shift;
+};
+
+/** Tính giờ with only the ODD end marked: where pay starts or stops away from the
+ *  shift edge. Most days match their shift, so a mark is the thing to look at. */
+function PaidSpan({ d }: { d: DayLine }) {
+  if (!d.paid_from && !d.paid_to) return <>—</>;
+  const wins = shiftWindows(d);
+  const start = wins[0]?.shift_in ?? d.shift_in, end = wins.at(-1)?.shift_out ?? d.shift_out;
+  const edge = (t: string | null, at: string | null, side: "in" | "out") => {
+    if (!t) return "?";
+    const off = at ? hm(t) - hm(at) : 0;
+    if (!off) return t;
+    const why = side === "in"
+      ? `Bắt đầu tính ${off > 0 ? "sau" : "trước"} giờ vào ca (${at}) ${fmtHours(Math.abs(off))}`
+      : off > 0 ? `Tính quá giờ ra ca (${at}) ${fmtHours(off)}` : `Kết thúc trước giờ ra ca (${at}) ${fmtHours(-off)}`;
+    return <mark title={why} className="rounded bg-amber-100 px-0.5 font-semibold text-amber-900">{t}</mark>;
+  };
+  return <>{edge(d.paid_from, start, "in")}–{edge(d.paid_to, end, "out")}</>;
+}
+
 /** The days behind one driver's totals, loaded when the row is opened. */
-function DriverDays({ month, driverId }: { month: string; driverId: string }) {
+function DriverDays({ month, driverId, total }: { month: string; driverId: string; total: DriverRow }) {
   const [days, setDays] = useState<DayLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -253,26 +280,42 @@ function DriverDays({ month, driverId }: { month: string; driverId: string }) {
           {days.map((d) => (
             <tr key={d.date} className={d.no_shift ? "bg-amber-50" : d.late_mins > LATE_FLAG || d.suspect.length ? "bg-rose-50" : ""}>
               <td className="px-3 py-1 whitespace-nowrap">{d.date.slice(8, 10)}/{d.date.slice(5, 7)} <span className="text-slate-400">{["CN", "T2", "T3", "T4", "T5", "T6", "T7"][new Date(`${d.date}T00:00:00Z`).getUTCDay()]}</span></td>
-              <td className="px-3 py-1 whitespace-nowrap">{d.shift || <span className="text-amber-700">Không ca</span>}</td>
+              <td className="px-3 py-1 whitespace-nowrap">{shiftText(d) || <span className="text-amber-700">Không ca</span>}</td>
               <td className="px-3 py-1 whitespace-nowrap">{span(d.tap_in, d.tap_out)}</td>
               <td className="px-3 py-1 whitespace-nowrap">{span(d.first_task, d.last_task)}</td>
-              <td className="px-3 py-1 whitespace-nowrap font-medium text-slate-800">{span(d.paid_from, d.paid_to)}</td>
+              <td className="px-3 py-1 whitespace-nowrap text-slate-800"><PaidSpan d={d} /></td>
               <td className="px-3 py-1 text-right">{fmtHours(d.worked_mins)}</td>
               <td className="px-3 py-1 text-right whitespace-nowrap">{d.jobs} · {vnd.format(d.km)}</td>
               <td className="px-3 py-1 text-right font-medium text-slate-800" title={`${fmtVnd(d.hour_pay)} giờ + ${fmtVnd(d.km_pay)} km`}>{vnd.format(Math.round(d.hour_pay + d.km_pay))}</td>
               <td className="px-3 py-1 text-[11px] whitespace-nowrap">
-                {d.corrected && <span className="mr-1 text-indigo-700">Đã duyệt</span>}
-                {d.no_shift_rejected && <span className="mr-1 text-slate-500" title="Ngày làm không có ca — quản lý chọn không tính tiền giờ">Không duyệt</span>}
-                {d.pending && <span className="mr-1 text-amber-700">Chờ duyệt</span>}
-                {d.suspect.map((x) => <span key={x} className="mr-1 text-rose-700">{x}</span>)}
-                {d.admin_done && <span className="mr-1 text-slate-500" title="Admin hoàn thành điểm giao cuối — giờ hoàn thành không phải của tài xế">Admin hoàn thành</span>}
-                {d.late_mins > LATE_FLAG && <span className="mr-1 text-rose-700" title="Bắt đầu trễ hơn 45 phút so với giờ vào ca — kiểm tra lại ca">Vào trễ {fmtHours(d.late_mins)}</span>}
-                {d.bo_mins > 0 && <span className="mr-1 text-emerald-700">BO {fmtHours(d.bo_mins)}</span>}
-                {d.multiplier > 1 && <span className="text-rose-700">Lễ ×{d.multiplier}</span>}
+                {([
+                  d.corrected && ["Đã duyệt", "text-indigo-700", "Giờ theo cập nhật công đã duyệt"],
+                  d.no_shift_rejected && ["Không duyệt", "text-slate-600", "Ngày làm không có ca — quản lý chọn không tính tiền giờ"],
+                  d.pending && ["Chờ duyệt", "text-amber-800", "Tài xế đã gửi cập nhật công"],
+                  ...d.suspect.map((x) => [x, "text-rose-700", ""]),
+                  d.admin_done && ["Admin hoàn thành", "text-slate-600", "Admin hoàn thành điểm giao cuối — giờ hoàn thành không phải của tài xế"],
+                  d.late_mins > LATE_FLAG && [`Vào trễ ${fmtHours(d.late_mins)}`, "text-rose-700", "Bắt đầu trễ hơn 45 phút so với giờ vào ca — kiểm tra lại ca"],
+                  d.multiplier > 1 && [`Lễ ×${d.multiplier}`, "text-indigo-700", "Ngày lễ: giờ tính gấp ba"],
+                ].filter(Boolean) as [string, string, string][]).map(([text, cls, why], i) => (
+                  <span key={text}>{i > 0 && <span className="text-slate-400" aria-hidden> · </span>}<span className={cls} title={why || undefined}>{text}</span></span>
+                ))}
               </td>
             </tr>
           ))}
         </tbody>
+        {/* The payroll figures, not a re-sum of the rows: per-day đồng are rounded,
+            and a foot that disagreed with the driver row by a few đồng would read
+            as an error. Hours add up exactly either way. */}
+        <tfoot className="border-t border-slate-300 bg-slate-50 font-semibold text-slate-800 tabular-nums">
+          <tr>
+            <td className="px-3 py-1.5 whitespace-nowrap">Cộng · {total.days_worked} ngày</td>
+            <td colSpan={4} />
+            <td className="px-3 py-1.5 text-right">{fmtHours(total.worked_mins)}</td>
+            <td className="px-3 py-1.5 text-right whitespace-nowrap">{total.jobs} · {vnd.format(total.km)}</td>
+            <td className="px-3 py-1.5 text-right">{vnd.format(Math.round(total.total_pay))}</td>
+            <td />
+          </tr>
+        </tfoot>
       </table>
     </div>
   );
@@ -724,6 +767,9 @@ export function PayTeamPanel() {
                         drivers hold a part-time and a full-time account under one
                         personal name, and pay is filed against the ACCOUNT. */}
                     <DriverName full={d.driver_name} className="font-medium text-slate-800" />
+                    {d.bo_pay > 0 && (
+                      <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700" title="Có giờ BO Runner (35.000đ/giờ) — khung BO ghi ở cột Ca của từng ngày">BO Runner</span>
+                    )}
                   </td>
                   <td className="text-right px-2 py-2 text-slate-600">{d.days_worked}</td>
                   <td className="text-right px-2 py-2 text-slate-600 tabular-nums">{fmtHours(d.worked_mins)}</td>
@@ -758,7 +804,7 @@ export function PayTeamPanel() {
                   </td>
                 </tr>
                 {open === d.driver_id && (
-                  <tr data-days><td colSpan={10} className="bg-slate-50 p-0 border-b border-slate-200"><DriverDays month={month} driverId={d.driver_id} /></td></tr>
+                  <tr data-days><td colSpan={10} className="bg-slate-50 p-0 border-b border-slate-200"><DriverDays month={month} driverId={d.driver_id} total={d} /></td></tr>
                 )}
                 </tbody>
               ))}
