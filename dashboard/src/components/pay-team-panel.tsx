@@ -139,6 +139,7 @@ interface DayLine {
   parts?: { shift_in: string | null; shift_out: string | null; kind: string; paid_from: string | null; paid_to: string | null; minutes: number; hour_pay: number }[];
 }
 const LATE_FLAG = 45;
+type PayView = "pay" | "noshift" | "suspect" | "corrections";
 
 interface SuspectDay {
   driver_id: string; driver_name: string; date: string; shift: string; last_task: string | null; reasons: string[];
@@ -315,10 +316,9 @@ export function PayTeamPanel() {
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   /** Set from the rose banner: only drivers on the "Nghi vấn" list. */
   const [onlyLate, setOnlyLate] = useState(false);
-  const [showLate, setShowLate] = useState(false);
-  /** The "Cập nhật công" review panel. */
-  const [showCorrections, setShowCorrections] = useState(false);
-  const [showFix, setShowFix] = useState(false);
+  /** Which list fills the main area. ONE value, not a flag per list: three flags
+   *  let "‹ Bảng lương" on one list land on another that was still open. */
+  const [view, setView] = useState<PayView>("pay");
 
   /** Payroll's monthly shift file → /api/pay/shifts. Parsed HERE, in the
    *  browser, so the server never spends CPU on a spreadsheet. */
@@ -500,24 +500,6 @@ export function PayTeamPanel() {
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importShifts(f); }}
           />
         </label>
-        <button
-          onClick={() => setShowCorrections((v) => !v)}
-          aria-expanded={showCorrections}
-          className="flex items-center gap-1.5 min-h-11 text-xs font-semibold rounded-lg px-3 border text-slate-700 border-slate-300 hover:bg-slate-50"
-        >
-          {showCorrections ? (
-            <><ChevronLeft className="size-3.5" /> Bảng lương</>
-          ) : (
-            <>
-              Cập nhật công
-              {!!data?.coverage.pending_corrections && (
-                <span className="rounded-full bg-amber-600 text-white text-[11px] leading-none px-1.5 py-1 tabular-nums">
-                  {data.coverage.pending_corrections}
-                </span>
-              )}
-            </>
-          )}
-        </button>
       </div>
 
       {importNote && (
@@ -567,9 +549,36 @@ export function PayTeamPanel() {
         </div>
       )}
 
+      {/* The four lists of the month, side by side. Each count is what is still
+          open there, so the row doubles as the pre-payroll to-do list. */}
+      {data && (
+        <div role="tablist" aria-label="Danh sách lương PT" className="flex gap-1 overflow-x-auto px-2 border-b border-slate-200 shrink-0">
+          {([
+            ["pay", "Bảng lương", 0, ""],
+            ["noshift", "Không ca", data.totals.no_shift_days, "bg-amber-700"],
+            ["suspect", "Nghi vấn", data.totals.suspect_days, "bg-rose-600"],
+            ["corrections", "Cập nhật công", data.coverage.pending_corrections, "bg-amber-700"],
+          ] as [PayView, string, number, string][]).map(([id, label, count, badge]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={view === id}
+              onClick={() => setView(id)}
+              className={`flex items-center gap-1.5 whitespace-nowrap px-3 min-h-11 text-sm border-b-2 -mb-px focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-slate-500 ${
+                view === id ? "border-slate-900 font-semibold text-slate-900" : "border-transparent text-slate-600 hover:text-slate-900"}`}
+            >
+              {label}
+              {count > 0 && (
+                <span className={`rounded-full ${badge} text-white text-xs leading-none px-1.5 py-0.5 tabular-nums`}>{count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* The one thing here that is a to-do rather than a report. */}
       {/* Stays while any no-shift day exists, so "Không duyệt" days keep a way back (Hoàn tác). */}
-      {data && (data.no_shift?.length ?? 0) > 0 && (
+      {data && view === "pay" && (data.no_shift?.length ?? 0) > 0 && (
         <div className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50 border-b border-amber-200 px-3 py-2 shrink-0">
           <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
           <span>
@@ -587,8 +596,8 @@ export function PayTeamPanel() {
                 ? "Hiện tất cả tài xế"
                 : `Chỉ hiện ${data.drivers.filter((d) => d.no_shift_days > 0).length} tài xế cần kiểm tra`}
             </button>{" · "}
-            <button onClick={() => { setShowFix((v) => !v); setShowCorrections(false); }} className="font-semibold underline underline-offset-2 hover:text-amber-950">
-              {showFix ? "‹ Bảng lương" : "Sửa nhanh"}
+            <button onClick={() => setView("noshift")} className="font-semibold underline underline-offset-2 hover:text-amber-950">
+              Sửa nhanh
             </button>
           </span>
         </div>
@@ -596,7 +605,7 @@ export function PayTeamPanel() {
 
       {/* Same shape as Không ca: a count, a filter, a list. The pay rule already
           stops a dragged ride at its due time; this is who to talk to. */}
-      {data && (data.totals.suspect_days > 0 || showLate) && (
+      {data && view === "pay" && data.totals.suspect_days > 0 && (
         <div className="flex items-start gap-2 text-xs text-rose-900 bg-rose-50 border-b border-rose-200 px-3 py-2 shrink-0">
           <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
           <span>
@@ -605,17 +614,20 @@ export function PayTeamPanel() {
             <button onClick={() => setOnlyLate((v) => !v)} className="font-semibold underline underline-offset-2 hover:text-rose-950">
               {onlyLate ? "Hiện tất cả tài xế" : `Chỉ hiện ${data.drivers.filter((d) => d.suspect_days > 0).length} tài xế`}
             </button>{" · "}
-            <button onClick={() => { setShowLate((v) => !v); setShowFix(false); setShowCorrections(false); }} className="font-semibold underline underline-offset-2 hover:text-rose-950">
-              {showLate ? "‹ Bảng lương" : "Xem danh sách"}
+            <button onClick={() => setView("suspect")} className="font-semibold underline underline-offset-2 hover:text-rose-950">
+              Xem danh sách
             </button>
           </span>
         </div>
       )}
 
-      {/* "Cập nhật công" takes the table's place while open, rather than pushing
-          the payroll off screen below it. */}
-      {showLate && data && !showFix && !showCorrections ? (
+      {/* A list takes the table's place while open, rather than pushing the
+          payroll off screen below it. */}
+      {view === "suspect" && data ? (
         <div className="flex-1 min-h-0 overflow-auto">
+          {(data.suspects ?? []).length === 0 ? (
+            <p className="py-16 text-center text-sm text-slate-500">Không có ngày nào nghi vấn kéo dài giờ trong kỳ này.</p>
+          ) : (
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wide">
               <tr>
@@ -633,12 +645,13 @@ export function PayTeamPanel() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
-      ) : showFix && data && !showCorrections ? (
+      ) : view === "noshift" && data ? (
         <div className="flex-1 min-h-0">
           <PayNoShiftPanel key={data.month} days={data.no_shift ?? []} onChanged={() => load(data.month)} />
         </div>
-      ) : showCorrections && data ? (
+      ) : view === "corrections" && data ? (
         <div className="flex-1 min-h-0">
           <PayCorrectionsPanel
             month={data.month}
@@ -755,7 +768,7 @@ export function PayTeamPanel() {
       )}
 
       {/* The rule, stated once, where the numbers are. */}
-      {data && !showCorrections && (
+      {data && view === "pay" && (
         <div className="px-3 py-2 border-t border-slate-200 shrink-0">
           <p className="text-[11px] text-slate-500">
             {vnd.format(data.rates.per_hour)}đ/giờ theo Lịch ca: bắt đầu từ lúc chấm công vào
