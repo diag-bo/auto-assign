@@ -481,8 +481,9 @@ export function PayTeamPanel() {
 
   return (
     <div className="h-full flex flex-col rounded-xl border border-slate-200 bg-white overflow-hidden">
-      {/* Month navigator */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-slate-200 shrink-0">
+      {/* Month navigator, with the period it really means under the name
+          ("Tháng 11" pays 15/10–14/11), then the tools as one group. */}
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-200 shrink-0">
         <div className="flex items-center gap-1">
           <button
             onClick={() => setMonth(shiftMonth(month, -1))}
@@ -491,8 +492,13 @@ export function PayTeamPanel() {
           >
             <ChevronLeft className="size-4" />
           </button>
-          <span className="text-sm font-semibold text-slate-800 min-w-[120px] text-center">
-            {monthLabel(month)}
+          <span className="min-w-[120px] text-center leading-tight">
+            <span className="block text-sm font-semibold text-slate-800">{monthLabel(month)}</span>
+            {data && (
+              <span className="block text-xs text-slate-600 tabular-nums">
+                {data.from.split("-").reverse().join("/").slice(0, 5)} – {data.to.split("-").reverse().join("/")}
+              </span>
+            )}
           </span>
           <button
             onClick={() => setMonth(shiftMonth(month, 1))}
@@ -503,10 +509,11 @@ export function PayTeamPanel() {
             <ChevronRight className="size-4" />
           </button>
         </div>
+        <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
         {/* Driver search. 80+ PT drivers is more than a screen, and the list is
             sorted by money owed, so finding one person means scrolling and
             reading. Typing beats scrolling; the code works as well as the name. */}
-        <div className="relative flex-1 min-w-0 max-w-[220px]">
+        <div className="relative min-w-0 flex-1 sm:flex-none sm:w-56">
           <Search className="size-3.5 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             value={q}
@@ -546,21 +553,16 @@ export function PayTeamPanel() {
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) importShifts(f); }}
           />
         </label>
+        </div>
       </div>
 
       {importNote && (
         <p role="status" className="px-3 py-2 text-xs text-slate-700 bg-slate-50 border-b border-slate-200">{importNote}</p>
       )}
 
-      {data && (
-        <p className="px-3 py-2 text-xs text-slate-600 border-b border-slate-200">
-          Kỳ lương: {data.from.split("-").reverse().join("/")} – {data.to.split("-").reverse().join("/")}
-        </p>
-      )}
-
       {/* Fleet totals. The money leads, because that is what this panel is for. */}
       {data && data.drivers.length > 0 && (
-        <div className="grid grid-cols-5 gap-px bg-slate-200 border-b border-slate-200 shrink-0">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-slate-200 border-b border-slate-200 shrink-0 [&>*:first-child]:col-span-2 sm:[&>*:first-child]:col-span-1">
           {[
             ["Tổng chi", fmtVnd(data.totals.total_pay), `${fmtVnd(data.totals.hour_pay)} giờ + ${fmtVnd(data.totals.km_pay)} km`],
             ["Tài xế PT", String(data.driver_count), ""],
@@ -762,21 +764,22 @@ export function PayTeamPanel() {
             {q ? `Không có tài xế nào khớp "${q}".` : onlyFlagged && data.totals.no_shift_days > 0 ? "Không có tài xế nào làm ngoài ca." : "Không có tài xế nào có ngày nghi vấn."}
           </p>
         ) : (
-          <table className="w-full text-sm">
+          // Capped: on a wide screen the name and its last figure sat ~1,900px apart.
+          <table className="w-full max-w-6xl text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50 text-slate-600 text-[11px] uppercase tracking-wide">
               <tr className="h-9">
                 <th className="text-left font-semibold px-3 py-2">Tài xế</th>
+                {/* The to-do counts sit beside the name they belong to; the figures
+                    follow. A word, not a glyph: screen readers got nothing from "⚠". */}
+                <th className="text-center font-semibold px-2 py-2" title="Ngày có làm nhưng không có ca trong Lịch ca — không tính tiền giờ">Không ca</th>
+                <th className="text-center font-semibold px-2 py-2" title="Ngày bắt đầu trễ hơn 45 phút so với giờ vào ca — thường là ca trong Lịch ca chưa đúng">Vào trễ</th>
+                <th className="text-center font-semibold px-2 py-2 border-r border-slate-200" title="Ngày có dấu hiệu kéo dài giờ: chuyến cuối chậm bất thường, hoàn thành sau khi chấm công ra, hoặc mở geofence">Nghi vấn</th>
                 <th className="text-right font-semibold px-2 py-2">Ngày</th>
                 <th className="text-right font-semibold px-2 py-2">Giờ</th>
                 <th className="text-right font-semibold px-2 py-2" title="Quãng đường lấy mẫu → giao mẫu của các chuyến được tính tiền">Km tính tiền</th>
                 <th className="text-right font-semibold px-2 py-2" title="Quãng đường thực tế đã chạy, gồm cả đoạn di chuyển giữa các chuyến và chuyến không tính tiền (theo Hiệu Suất)">Km thực</th>
                 <th className="text-right font-semibold px-3 py-2">Tổng (đ)</th>
                 <th className="text-right font-semibold px-2 py-2" title="(Tiền giờ + tiền km, không tính giờ BO Runner) ÷ km thực chạy">đ/km thực</th>
-                {/* A word, not a glyph: the column is a task list and screen readers
-                    got nothing from "⚠". */}
-                <th className="text-right font-semibold px-2 py-2" title="Ngày có làm nhưng không có ca trong Lịch ca — không tính tiền giờ">Không ca</th>
-                <th className="text-right font-semibold px-2 py-2" title="Ngày bắt đầu trễ hơn 45 phút so với giờ vào ca — thường là ca trong Lịch ca chưa đúng">Vào trễ</th>
-                <th className="text-right font-semibold px-2 py-2" title="Ngày có dấu hiệu kéo dài giờ: chuyến cuối chậm bất thường, hoàn thành sau khi chấm công ra, hoặc mở geofence">Nghi vấn</th>
               </tr>
             </thead>
                           {shown.map((d, i) => (
@@ -801,6 +804,21 @@ export function PayTeamPanel() {
                       <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700" title="Có giờ BO Runner (35.000đ/giờ) — khung BO ghi ở cột Ca của từng ngày">BO Runner</span>
                     )}
                   </td>
+                  <td className="text-center px-2 py-2 tabular-nums">
+                    {d.no_shift_days > 0
+                      ? <span className="text-amber-700 font-semibold">{d.no_shift_days}</span>
+                      : <span className="text-slate-500">—</span>}
+                  </td>
+                  <td className="text-center px-2 py-2 tabular-nums">
+                    {d.late_days > 0
+                      ? <span className="text-rose-700 font-semibold">{d.late_days}</span>
+                      : <span className="text-slate-500">—</span>}
+                  </td>
+                  <td className="text-center px-2 py-2 tabular-nums border-r border-slate-200">
+                    {d.suspect_days > 0
+                      ? <span className="text-rose-700 font-semibold">{d.suspect_days}</span>
+                      : <span className="text-slate-500">—</span>}
+                  </td>
                   <td className="text-right px-2 py-2 text-slate-600">{d.days_worked}</td>
                   <td className="text-right px-2 py-2 text-slate-600 tabular-nums">{fmtHours(d.worked_mins)}</td>
                   <td className="text-right px-2 py-2 text-slate-600 tabular-nums">{fmtKm(d.km)}</td>
@@ -816,21 +834,6 @@ export function PayTeamPanel() {
                     title={d.real_km > 0 ? `${fmtVnd(d.total_pay - d.bo_pay)}${d.bo_pay ? ` (không tính ${fmtVnd(d.bo_pay)} giờ BO)` : ""} ÷ ${fmtKm(d.real_km)} km thực` : "Chưa có dữ liệu km thực"}
                   >
                     {fmtRate(realRate(d.total_pay - d.bo_pay, d.real_km))}
-                  </td>
-                  <td className="text-right px-2 py-2 tabular-nums">
-                    {d.no_shift_days > 0
-                      ? <span className="text-amber-700 font-semibold">{d.no_shift_days}</span>
-                      : <span className="text-slate-500">—</span>}
-                  </td>
-                  <td className="text-right px-2 py-2 tabular-nums">
-                    {d.late_days > 0
-                      ? <span className="text-rose-700 font-semibold">{d.late_days}</span>
-                      : <span className="text-slate-500">—</span>}
-                  </td>
-                  <td className="text-right px-2 py-2 tabular-nums">
-                    {d.suspect_days > 0
-                      ? <span className="text-rose-700 font-semibold">{d.suspect_days}</span>
-                      : <span className="text-slate-500">—</span>}
                   </td>
                 </tr>
                 {open === d.driver_id && (
