@@ -4,9 +4,9 @@
  *   1. COLLECT — a ONE-STOP job at the PSC, one per (PSC, client), carrying a photo
  *      to-do per booking. A later booking for the same client is APPENDED to it while
  *      the driver has not set off (stop still "Chờ lấy"); after that a new one is made.
- *      Given at booking to the client's fixed driver. A smart client's (D001 included)
- *      is parked on the proxy and given to the driver of the client's sample pickup
- *      once they are at the PSC (smartCollector, 2026-11-04).
+ *      PARKED on the proxy at booking — every client's, fixed or smart (2026-11-16) —
+ *      and given to the driver of the client's sample pickup, or one within
+ *      NEAR_PICKUP_KM, once they are at the PSC (smartCollector / nearCollector).
  *   2. HAND OVER — once that stop is done the driver HOLDS the items. The next sample
  *      pickup at the client that is theirs and not yet started gets a photo to-do
  *      "Giao KQ/VT …". For a smart client the engine puts that pickup on the holder
@@ -83,9 +83,9 @@ export interface KqvtEntry {
   origin?: string; at?: string; hops?: string[]; leg_job?: number; leg_checked_ms?: number;
   /** A direct PSC → client job (NEAR_KM): no collect/hand-over halves. */
   direct?: boolean;
-  /** A smart client's collect job, PARKED on the proxy driver (parkCollect): the cycle
-   *  gives it to the driver of the client's sample pickup once they are at the PSC
-   *  (smartCollector). */
+  /** A collect job PARKED on the proxy driver (parkCollect) — every one-stop job since
+   *  2026-11-16, fixed clients too: the cycle gives it to the driver of the client's
+   *  sample pickup (or one nearby) once they are at the PSC (smartCollector). */
   smart?: boolean;
   /** Multi-leg (KQVT_VIA): also collected where it waits, by the driver of the client's
    *  sample pickup, if they are there before a return trip takes it. */
@@ -391,7 +391,7 @@ export function bookedStatus(bid: string, ending: Ending | null, entries: KqvtEn
     return { status: `Giao trực tiếp — ${e.collector ? `${e.collector_name ?? "tài xế"}, chưa lấy` : "chờ điều phối"}`, tone: "wait", job: e.job_id };
   }
   if (e.holder) return { status: `${e.holder_name ?? "Tài xế"} đã lấy, sẽ giao kèm chuyến lấy mẫu tại khách`, tone: "move", job: e.job_id };
-  if (e.smart && !e.collector) return { status: `Chờ tài xế đi lấy mẫu tại khách ghé ${e.psc_name}`, tone: "wait", job: e.job_id };
+  if (!e.collector && !e.collector_name) return { status: `Chờ tài xế đi lấy mẫu tại khách ghé ${e.psc_name}`, tone: "wait", job: e.job_id };
   return { status: `Chờ ${e.collector_name ?? "điều phối"} lấy tại ${e.psc_name}`, tone: "wait", job: e.job_id };
 }
 
@@ -726,10 +726,6 @@ export async function clientPosition(clientId: string): Promise<{ lat: number; l
  *  (34529748, 12/11). */
 export const parkCollect = (jobId: number, env: Env) => assignJob(PROXY_DRIVER_ID, jobId, env);
 
-/** A client the config serves with a smart pool (two or more candidates). */
-export const isSmartClient = (config: Config, clientId: string) =>
-  config.mappings.some((m) => m.customer_id === clientId && m.smart_driver_id.length >= 2);
-
 export function waitingTooLong(e: KqvtEntry, now: number): boolean {
   return now - (e.collected_ms ?? e.created_ms) > WAIT_ALERT_MS;
 }
@@ -804,12 +800,11 @@ export async function kqvtCycle(
     log(`Job ${ride.job_id} - KQ/VT đi kèm chuyến về (${itemsText(e.items)}) | ${pscName(e.at!)} → ${pscName(e.hops[0])} → ${e.client_name}`, "OK");
   };
 
-  /** At the client's drop-off: only now is the collect job made, given to the client's
-   *  driver — or to `given`, the client's driver found at the PSC it waits at (early).
-   *  A failed create is retried next cycle — the item stays on the list. */
+  /** At the client's drop-off: only now is the collect job made — parked like every
+   *  collect job, or given to `given`, the client's driver found at the PSC it waits at
+   *  (early). A failed create is retried next cycle — the item stays on the list. */
   const arrive = async (e: KqvtEntry, given?: { driverId: string; name: string | undefined }) => {
-    const psc = PSC_ROUTES.find((r) => r.pickup === e.psc);
-    const who = given ?? (psc ? await pickCollector(config, leave, e.client_id, psc, env, false).catch(() => null) : null);
+    const who = given ?? null;
     const res = await createCollectJob(e, e.origin !== e.psc ? `Chuyển từ ${pscName(e.origin!)} theo chuyến về` : "", who, env);
     if (!res.jobId) {
       log(`Giao KQ/VT FAILED - chưa tạo được chuyến lấy tại ${e.psc_name} (${res.status}) | ${pscName(e.origin!)} → ${e.client_name}`, "WARN");
@@ -817,11 +812,11 @@ export async function kqvtCycle(
     }
     const waitKey = e.job_id;
     Object.assign(e, { job_id: res.jobId, hops: undefined, collector: res.driverId ?? undefined, collector_name: res.driverId ? who?.name ?? undefined : undefined,
-      smart: (!res.driverId && isSmartClient(config, e.client_id)) || undefined });
+      smart: !res.driverId || undefined });
     await savePending(e);
     await dropPending(waitKey);
     if (e.smart) await parkCollect(e.job_id, env).catch(() => null);
-    log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${res.driverId ? who?.name ?? "tài xế" : "chờ điều phối"} | ${e.psc_name} → ${e.client_name}`, "OK");
+    log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${res.driverId ? who?.name ?? "tài xế" : "đỗ chờ tài xế lấy mẫu tại khách"} | ${e.psc_name} → ${e.client_name}`, "OK");
   };
 
   const attach = async (e: KqvtEntry, job: Job) => {
@@ -872,11 +867,11 @@ export async function kqvtCycle(
       }
       const verdict = e.direct ? "wait" : collectVerdict(collect);
       if (verdict === "drop") { await dropPending(e.job_id); await closeItems(e, { state: "huy", job: e.job_id }); continue; }
-      // A smart client's collect job, parked (or nobody's — released overnight, rolled
-      // over): give it to the driver of the client's pickup once they are at the PSC,
+      // A collect job parked (or nobody's — rolled over, or booked before every one was
+      // parked): give it to the driver of the client's pickup once they are at the PSC,
       // else park it again. Left alone once a real driver holds it.
       const parked = collect && collect !== "gone" ? collect.delivery_driver_id === PROXY_DRIVER_ID : false;
-      if (verdict === "wait" && e.smart && collect && collect !== "gone" && (parked || !collect.delivery_driver_id)) {
+      if (verdict === "wait" && !e.direct && collect && collect !== "gone" && (parked || !collect.delivery_driver_id)) {
         // The client's own pickup first; else one within NEAR_PICKUP_KM of the client.
         let who: { driverId: string; name: string | undefined } | null = smartCollector(e, jobsToday, now);
         let near = false;
@@ -901,6 +896,8 @@ export async function kqvtCycle(
           log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${who.name ?? "tài xế"} (đang ở PSC, có chuyến lấy mẫu ${near ? `cách khách dưới ${NEAR_PICKUP_KM} km` : "tại khách"}) | ${e.psc_name} → ${e.client_name}`, "OK");
         } else if (!parked) {
           await parkCollect(e.job_id, env).catch(() => null);
+          // Its old driver (rolled over) no longer has it: /qr says it waits, not "Chờ <name>".
+          if (e.collector || e.collector_name) { e.collector = e.collector_name = undefined; await savePending(e); }
         }
       }
       if (verdict === "collected" && collect && collect !== "gone") {

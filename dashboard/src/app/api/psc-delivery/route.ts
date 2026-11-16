@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { BASE_URL, getHeaders, getCustomerById } from "@/lib/cartrack";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
-import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, deliverTodo, isNear, isSmartClient, kqvtDropoff, servedPscs, loadBooked, parkCollect, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
+import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, deliverTodo, isNear, kqvtDropoff, servedPscs, loadBooked, parkCollect, loadPending, logBooking, pickCollector, planDelivery, pscClients, pscName, savePending, waitingKey, type KqvtEntry, type KqvtItem } from "@/lib/kqvt";
 import { loadConfig } from "@/lib/config";
 import { loadLeaveEntries } from "@/lib/leave-config";
 import { shortCode } from "@/lib/psc-dup";
@@ -249,7 +249,10 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        const who = plan.autoAssign && config && leave ? await pickCollector(config, leave, d.customer_id, route, "prod", near).catch(() => null) : null;
+        // Only a direct job is given at booking. Every one-stop collect job is parked
+        // (supervisor, 2026-11-16 — fixed clients too): the cycle hands it to the driver
+        // of the client's pickup, or one nearby, once they are at the PSC (lib/kqvt.ts).
+        const who = near && plan.autoAssign && config && leave ? await pickCollector(config, leave, d.customer_id, route, "prod", true).catch(() => null) : null;
         const res = await createCollectJob(base, "", who, "prod", near);
         if (!res.jobId) {
           console.error("[psc-delivery] create failed:", res.status, JSON.stringify(res.body).slice(0, 300));
@@ -259,10 +262,7 @@ export async function POST(req: NextRequest) {
         const entry: KqvtEntry = {
           ...base, job_id: res.jobId, collector: res.driverId ?? undefined, collector_name: res.driverId ? who?.name ?? undefined : undefined,
           ...(near ? { direct: true } : {}),
-          // Smart client, nobody given: parked on the proxy until the cycle hands it to the
-          // driver of the client's pickup once they are at the PSC (lib/kqvt.ts). D001
-          // clients too (supervisor, 2026-11-04).
-          ...(!near && !res.driverId && config && isSmartClient(config, d.customer_id) ? { smart: true } : {}),
+          ...(!near ? { smart: true } : {}),
         };
         await savePending(entry);
         pending.push(entry);
