@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, AlertCircle, Download, ChevronLeft, ChevronRight, ChevronDown, Search, X, Upload } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle2, Download, ChevronLeft, ChevronRight, ChevronDown, Search, X, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import { parsePayrollSheet } from "@/lib/pay-shifts";
 import { foldName } from "@/lib/driver-cell";
@@ -473,8 +473,11 @@ export function PayTeamPanel() {
   const needle = foldName(q.trim());
   const shown = !data ? [] : data.drivers
     .filter((d) => (needle ? foldName(d.driver_name).includes(needle) : true))
-    .filter((d) => (onlyFlagged ? d.no_shift_days > 0 : true))
-    .filter((d) => (onlyLate ? d.suspect_days > 0 : true));
+    .filter((d) => (onlyFlagged && data.totals.no_shift_days > 0 ? d.no_shift_days > 0 : true))
+    .filter((d) => (onlyLate && data.totals.suspect_days > 0 ? d.suspect_days > 0 : true));
+  /** Days that still need a decision before payroll runs. Vào trễ is a hint
+   *  about the roster, not a decision, so it does not hold payroll up. */
+  const openDays = data ? data.totals.no_shift_days + data.totals.suspect_days : 0;
 
   return (
     <div className="h-full flex flex-col rounded-xl border border-slate-200 bg-white overflow-hidden">
@@ -577,9 +580,37 @@ export function PayTeamPanel() {
         </div>
       )}
 
-      {/* Incomplete coverage comes first: every figure below is short until it clears. */}
+      {/* The period's state in one line: data missing (red) → days still to decide
+          (neutral) → ready (green). Incomplete coverage comes first: every figure
+          below is short until it clears. */}
+      {data && data.drivers.length > 0 && data.coverage.ready && openDays > 0 && (
+        <div className="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border-b border-slate-200 px-3 py-2 shrink-0">
+          <AlertCircle className="size-3.5 mt-0.5 shrink-0 text-slate-500" />
+          <span>
+            Đủ dữ liệu kỳ này. Còn{" "}
+            {data.totals.no_shift_days > 0 && (
+              <button onClick={() => setView("noshift")} className="font-semibold underline underline-offset-2 hover:text-slate-950">
+                {data.totals.no_shift_days} ngày không ca
+              </button>
+            )}
+            {data.totals.no_shift_days > 0 && data.totals.suspect_days > 0 && " · "}
+            {data.totals.suspect_days > 0 && (
+              <button onClick={() => setView("suspect")} className="font-semibold underline underline-offset-2 hover:text-slate-950">
+                {data.totals.suspect_days} ngày nghi vấn
+              </button>
+            )}{" "}
+            cần xử lý trước khi chạy lương.
+          </span>
+        </div>
+      )}
+      {data && data.drivers.length > 0 && data.coverage.ready && openDays === 0 && (
+        <div role="status" className="flex items-start gap-2 text-xs text-emerald-900 bg-emerald-50 border-b border-emerald-200 px-3 py-2 shrink-0">
+          <CheckCircle2 className="size-3.5 mt-0.5 shrink-0 text-emerald-700" />
+          <span><strong>Sẵn sàng chạy lương.</strong> Đủ dữ liệu, không còn ngày không ca hay nghi vấn chưa xử lý.</span>
+        </div>
+      )}
       {data && !data.coverage.ready && (
-        <div className="flex items-start gap-2 text-[11px] text-red-800 bg-red-50 border-b border-red-200 px-3 py-2 shrink-0">
+        <div className="flex items-start gap-2 text-xs text-red-800 bg-red-50 border-b border-red-200 px-3 py-2 shrink-0">
           <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
           <span>
             <strong>Chưa đủ dữ liệu — chưa duyệt lương kỳ này.</strong>{" "}
@@ -619,16 +650,15 @@ export function PayTeamPanel() {
         </div>
       )}
 
-      {/* The one thing here that is a to-do rather than a report. */}
-      {/* Stays while any no-shift day exists, so "Không duyệt" days keep a way back (Hoàn tác). */}
-      {data && view === "pay" && (data.no_shift?.length ?? 0) > 0 && (
+      {/* The one thing here that is a to-do rather than a report. Gone at 0: a
+          finished list is not a warning, and declined days stay reachable from
+          the Không ca tab (Hoàn tác). */}
+      {data && view === "pay" && data.totals.no_shift_days > 0 && (
         <div className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50 border-b border-amber-200 px-3 py-2 shrink-0">
           <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
           <span>
-            {data.totals.no_shift_days > 0 ? (<>
-              {data.totals.no_shift_days} ngày tài xế có chấm công hoặc chạy chuyến nhưng
-              không có ca trong Lịch ca — <strong>không tính tiền giờ</strong>.{" "}
-            </>) : <>Đã xử lý hết ngày làm không có ca.{" "}</>}
+            {data.totals.no_shift_days} ngày tài xế có chấm công hoặc chạy chuyến nhưng
+            không có ca trong Lịch ca — <strong>không tính tiền giờ</strong>.{" "}
             {/* The banner IS the filter. Telling a supervisor to eye-scan 82 rows for
                 a low-contrast digit is not a to-do, it is a search task. */}
             <button
@@ -729,7 +759,7 @@ export function PayTeamPanel() {
           </p>
         ) : shown.length === 0 ? (
           <p className="text-center text-sm text-slate-500 py-16">
-            {q ? `Không có tài xế nào khớp "${q}".` : "Không có tài xế nào làm ngoài ca."}
+            {q ? `Không có tài xế nào khớp "${q}".` : onlyFlagged && data.totals.no_shift_days > 0 ? "Không có tài xế nào làm ngoài ca." : "Không có tài xế nào có ngày nghi vấn."}
           </p>
         ) : (
           <table className="w-full text-sm">
