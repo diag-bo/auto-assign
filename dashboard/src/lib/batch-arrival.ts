@@ -108,8 +108,6 @@ async function openLisBatches(now: number): Promise<LisBatch[] | null> {
 }
 
 let lastRun = 0;
-let memo: StuckBatch[] | null = null;
-let memoJson = "";
 
 /** Called by the assign cycle with today's timeline. In-process gate, so a quiet run costs no Redis. */
 export async function maybeCheckBatchArrivals(jobs: Job[], now = Date.now()): Promise<void> {
@@ -118,10 +116,12 @@ export async function maybeCheckBatchArrivals(jobs: Job[], now = Date.now()): Pr
   try {
     const open = await openLisBatches(now);
     if (!open) { console.error("[batch-arrival] Labcenter batch list unavailable"); return; }
-    const rows = findStuckBatches(jobs, open, memo ?? await getBatchArrivals(), now);
-    const json = JSON.stringify(rows);
-    if (json !== memoJson) await setCycleSnapshot({ batchArrivals: rows });
-    memo = rows; memoJson = json;
+    // Compared against what Redis holds, not this instance's last answer: several
+    // instances run the cycle, and one that last saw [] would never clear a row
+    // another instance wrote (B043261116050549 stayed listed after Labcenter completed it).
+    const stored = await getBatchArrivals();
+    const rows = findStuckBatches(jobs, open, stored, now);
+    if (JSON.stringify(rows) !== JSON.stringify(stored)) await setCycleSnapshot({ batchArrivals: rows });
   } catch (e) {
     console.error("[batch-arrival]", e);
   }
