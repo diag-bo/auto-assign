@@ -47,6 +47,9 @@ interface Correction {
 }
 
 const toMin = (t: string | null | undefined) => (t ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null);
+/** The window(s) the engine pays without the correction, e.g. "17:00–20:00". */
+const ruleText = (e: Correction["evidence"]) => (e.rule_spans ?? []).filter((s) => s.from && s.to).map((s) => `${s.from}–${s.to}`).join(", ");
+const clock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const fmtH = (m: number) => `${Math.floor(Math.abs(m) / 60)}h${String(Math.abs(m) % 60).padStart(2, "0")}`;
 const fmtD = (d: string) => d.split("-").reverse().slice(0, 2).join("/");
 const WEEKDAY = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
@@ -95,8 +98,8 @@ function DayTimeline({ r }: { r: Correction }) {
               style={{ left: `${x(t.m)}%` }} />
           ))
         : <span className="absolute inset-y-0 left-0 flex items-center text-[11px] text-slate-500">không chấm công</span> },
-    { label: "Đang tính", value: rule.length ? `${fmtH(e.rule_mins)}` : "0h00", render: () => rule.length
-        ? rule.map(([a, b], i) => bar(a, b, "h-2.5 border-2 border-dashed border-slate-500 bg-transparent", `Hệ thống đang tính ${fmtH(b - a)}`, i))
+    { label: "Đang tính", value: rule.length ? `${ruleText(e)} · ${fmtH(e.rule_mins)}` : "0h00", render: () => rule.length
+        ? rule.map(([a, b], i) => bar(a, b, "h-2.5 border-2 border-dashed border-slate-500 bg-transparent", `Hệ thống đang tính ${clock(a)}–${clock(b)} · ${fmtH(b - a)}`, i))
         : <span className="absolute inset-y-0 left-0 flex items-center text-[11px] text-slate-500">0 giờ</span> },
     { label: "Đề nghị", value: `${r.in_time}–${r.out_time}`, render: () => bar(reqIn, reqOut, "h-3.5 bg-blue-600", `Đề nghị ${r.in_time}–${r.out_time}`) },
   ];
@@ -182,7 +185,7 @@ function RequestRow({ r, busy, onDecide }: {
         <DayTimeline r={r} />
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
           <span className="text-slate-700">Đề nghị <b className="text-blue-700">{r.in_time}–{r.out_time} · {fmtH(r.requested_mins)}</b></span>
-          <span className="text-slate-700">Đang tính <b className="text-slate-900">{fmtH(e.rule_mins)}</b></span>
+          <span className="text-slate-700">Đang tính <b className="text-slate-900">{ruleText(e) ? `${ruleText(e)} · ` : ""}{fmtH(e.rule_mins)}</b></span>
           {delta !== 0 && (
             <span className={`font-semibold ${delta > 0 ? "text-amber-800" : "text-slate-700"}`}>
               {delta > 0 ? "+" : "−"}{fmtH(delta)} nếu duyệt

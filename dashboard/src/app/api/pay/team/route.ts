@@ -40,7 +40,7 @@ interface DayLine {
   date: string; shift: string; tap_in: string | null; tap_out: string | null;
   first_task: string | null; last_task: string | null; paid_from: string | null; paid_to: string | null;
   worked_mins: number; bo_mins: number; multiplier: number; jobs: number; km: number;
-  hour_pay: number; km_pay: number; no_shift: boolean; corrected: boolean; pending: boolean; late_mins: number; suspect: string[]; admin_done: boolean;
+  hour_pay: number; km_pay: number; no_shift: boolean; no_shift_rejected: boolean; corrected: boolean; pending: boolean; late_mins: number; suspect: string[]; admin_done: boolean;
   /** First shift start and last shift end ("ca vào" / "ca ra"), for the CSV. */
   shift_in: string | null; shift_out: string | null;
   /** One entry per shift window — the CSV's rows, so a split day is two rows. */
@@ -111,7 +111,7 @@ export async function GET(req: NextRequest) {
     }
 
     const wantLines = (id: string) => detailFor === "all" || id === detailFor;
-    const [daily, punches, sealed, legsDaily, inputs, geofence, reviewRows] = await Promise.all([
+    const [daily, punches, sealed, legsDaily, inputs, geofence, reviewRows, noShiftRows] = await Promise.all([
       sbSelectAll<DailyRow>(
         "v_pay_daily",
         `select=*&trip_date=gte.${from}&trip_date=lte.${to}`,
@@ -151,7 +151,13 @@ export async function GET(req: NextRequest) {
         "pay_suspect_reviews",
         `select=driver_id,trip_date,verdict,in_time,out_time,note&trip_date=gte.${from}&trip_date=lte.${to}`,
         "trip_date.asc"),
+      // "Không duyệt" on a "Không ca" day: left unpaid, off the open count.
+      sbSelectAll<{ driver_id: string; trip_date: string }>(
+        "pay_no_shift_reviews",
+        `select=driver_id,trip_date&trip_date=gte.${from}&trip_date=lte.${to}`,
+        "trip_date.asc"),
     ]);
+    const noShiftRejected = new Set(noShiftRows.map((r) => dayKey(r.driver_id, r.trip_date)));
     const reviews = new Map(reviewRows.map((r) => [dayKey(r.driver_id, r.trip_date), {
       verdict: r.verdict, note: r.note,
       paid: r.in_time && r.out_time ? `${r.in_time.slice(0, 5)}–${r.out_time.slice(0, 5)}` : null }]));
@@ -216,7 +222,7 @@ export async function GET(req: NextRequest) {
     /** Every day worked without a shift, with what the day itself says — Lương PT's
      *  quick fix approves the suggested window as a supervisor correction. */
     const noShift: { driver_id: string; driver_name: string; date: string; first_in: string | null; last_out: string | null;
-      first_task: string | null; last_task: string | null; suggest_in: string | null; suggest_out: string | null; pending: boolean }[] = [];
+      first_task: string | null; last_task: string | null; suggest_in: string | null; suggest_out: string | null; pending: boolean; rejected: boolean }[] = [];
     /** "Nghi vấn": days with a sign of padded hours (supervisor, 2026-10-19). A
      *  last ride past the shift end that took over twice its normal time (and 30+
      *  min extra), a trip completed after the check-out, or a geofence opened.
@@ -249,6 +255,7 @@ export async function GET(req: NextRequest) {
           }, code);
           mins += w.minutes;
           boMins += w.bo_minutes;
+          const rejected = w.no_shift && noShiftRejected.has(dayKey(driver_id, date));
           const s = suggestedWindow(e.byDay.get(date) ?? [], t?.first ?? null, t?.last ?? null, date);
           // A day continued from the DC account began at the DC shift end, not at the first PT stamp.
           const cont = inputs.continued.get(dayKey(driver_id, date));
@@ -285,20 +292,21 @@ export async function GET(req: NextRequest) {
               worked_mins: w.minutes, bo_mins: w.bo_minutes, multiplier: w.multiplier,
               jobs: t?.jobs ?? 0, km: dayKm,
               hour_pay: hoursPayFor(w.minutes, w.bo_minutes), km_pay: kmPayFor(dayKm),
-              no_shift: w.no_shift, corrected: w.corrected, late_mins: lateMins, suspect: reasons, admin_done: adminDone,
+              no_shift: w.no_shift, no_shift_rejected: rejected, corrected: w.corrected, late_mins: lateMins, suspect: reasons, admin_done: adminDone,
               pending: inputs.latest.get(dayKey(driver_id, date))?.status === "pending",
               shift_in: dayShifts[0]?.start ?? null, shift_out: dayShifts.at(-1)?.end ?? null,
               parts: dayParts(w, inputs.rostered.get(dayKey(driver_id, date)) ?? dayShifts, date, code, hhmm),
             });
           }
           if (w.no_shift) {
-            noShiftDays++;
+            if (!rejected) noShiftDays++;
             const s = suggestedWindow(e.byDay.get(date) ?? [], t?.first ?? null, t?.last ?? null, date);
             noShift.push({
               driver_id, driver_name: names.get(driver_id) || e.name || driver_id.slice(0, 8), date,
               first_in: hhmm(s.first_in), last_out: hhmm(s.last_out), first_task: hhmm(t?.first ?? null), last_task: hhmm(t?.last ?? null),
               suggest_in: hhmm(s.in), suggest_out: hhmm(s.out),
               pending: inputs.latest.get(dayKey(driver_id, date))?.status === "pending",
+              rejected,
             });
           }
         }

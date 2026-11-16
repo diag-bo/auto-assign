@@ -12,6 +12,8 @@
  *                         a supervisor's own correction — approved at once.
  *        {action:"suspect_ok"|"suspect_cut"|"suspect_undo", driver_id, date, in_time?, out_time?, note}
  *                         a ruling on a Lương PT "Nghi vấn" day (pay_suspect_reviews).
+ *        {action:"no_shift_reject"|"no_shift_undo", driver_id, date, note}
+ *                         "Không duyệt" on a "Không ca" day (pay_no_shift_reviews).
  *
  * EVIDENCE, NOT GPS. No GPS trail is kept anywhere (Cartrack gives only a driver's
  * current position); what the day does have is every completed stop with its time
@@ -215,6 +217,17 @@ export async function POST(req: NextRequest) {
         source: "supervisor", status: "approved", decided_at: now,
       }]);
       await sbUpsert("pay_suspect_reviews", [{ driver_id: driverId, trip_date: date, verdict: "cut", in_time: input.in_time, out_time: input.out_time, note: input.note, decided_at: now }], "driver_id,trip_date");
+      return NextResponse.json({ ok: true });
+    }
+
+    // "Không duyệt" on a Lương PT "Không ca" day: left unpaid, off the open list.
+    // Nothing about pay changes — an unshifted day already pays no hours.
+    if (body?.action === "no_shift_reject" || body?.action === "no_shift_undo") {
+      const driverId = String(body.driver_id ?? "");
+      const date = String(body.date ?? "");
+      if (!UUID.test(driverId) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return NextResponse.json({ ok: false, error: "Ngày không hợp lệ." }, { status: 400 });
+      if (body.action === "no_shift_undo") await sbDelete("pay_no_shift_reviews", `driver_id=eq.${driverId}&trip_date=eq.${date}`);
+      else await sbUpsert("pay_no_shift_reviews", [{ driver_id: driverId, trip_date: date, note, decided_at: now }], "driver_id,trip_date");
       return NextResponse.json({ ok: true });
     }
 

@@ -6,14 +6,18 @@
  * One click approves it as a supervisor "cập nhật công" — the same correction the
  * Cập nhật công panel makes, so it pays the day outright and no shift sync can
  * undo it. A day with a driver's request already waiting is left to that panel.
+ * "Không duyệt" leaves the day unpaid and takes it off the list (Hoàn tác puts it
+ * back) — pay_no_shift_reviews.
  */
 import { useState } from "react";
-import { Loader2, Check } from "lucide-react";
+import { Loader2, Check, X } from "lucide-react";
 
 export interface NoShiftDay {
   driver_id: string; driver_name: string; date: string;
   first_in: string | null; last_out: string | null; first_task: string | null; last_task: string | null;
   suggest_in: string | null; suggest_out: string | null; pending: boolean;
+  /** "Không duyệt": left unpaid on purpose. */
+  rejected?: boolean;
 }
 
 const WEEKDAY = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
@@ -30,25 +34,34 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Set<string>>(new Set());
+  /** Local "Không duyệt" state, ahead of the reload: key → rejected or not. */
+  const [rej, setRej] = useState<Map<string, boolean>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
-  const open = days.filter((d) => !done.has(keyOf(d)));
+  const isRejected = (d: NoShiftDay) => rej.get(keyOf(d)) ?? !!d.rejected;
+  const live = days.filter((d) => !done.has(keyOf(d)));
+  const open = live.filter((d) => !isRejected(d));
+  const rejected = live.filter(isRejected);
   const ready = (d: NoShiftDay) => { const t = times[keyOf(d)]; return !d.pending && !!t?.in && !!t?.out && t.in < t.out; };
-  const chosen = open.filter((d) => picked.has(keyOf(d)) && ready(d));
+  const pickedOpen = open.filter((d) => picked.has(keyOf(d)) && !d.pending);
+  const chosen = pickedOpen.filter(ready);
 
-  async function approve(list: NoShiftDay[]) {
+  async function send(kind: "approve" | "reject" | "undo", list: NoShiftDay[]) {
     setBusy(true); setError(null);
     const failed: string[] = [];
     for (const d of list) {
       const t = times[keyOf(d)];
+      const body = kind === "approve"
+        ? { action: "create", driver_id: d.driver_id, date: d.date, in_time: t.in, out_time: t.out, note: NOTE }
+        : { action: kind === "reject" ? "no_shift_reject" : "no_shift_undo", driver_id: d.driver_id, date: d.date, note: "Không duyệt: ngày làm không có ca" };
       try {
         const res = await fetch("/api/pay/corrections", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "create", driver_id: d.driver_id, date: d.date, in_time: t.in, out_time: t.out, note: NOTE }),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         });
         const j = await res.json();
         if (!res.ok || !j.ok) throw new Error(j.error ?? "Không lưu được");
-        setDone((s) => new Set(s).add(keyOf(d)));
+        if (kind === "approve") setDone((s) => new Set(s).add(keyOf(d)));
+        else setRej((m) => new Map(m).set(keyOf(d), kind === "reject"));
       } catch (e) { failed.push(`${shortName(d.driver_name)} ${fmtDay(d.date)}: ${e instanceof Error ? e.message : String(e)}`); }
     }
     setPicked(new Set()); setBusy(false);
@@ -61,15 +74,24 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
         <p className="text-xs text-slate-600">
           {open.length} ngày làm không có ca. Giờ đề nghị lấy từ chấm công vào (không có thì chuyến đầu) đến chấm công
-          ra hoặc chuyến cuối, lấy giờ trễ hơn — sửa nếu cần rồi bấm Duyệt.
+          ra hoặc chuyến cuối, lấy giờ trễ hơn — sửa nếu cần rồi bấm Duyệt. Không duyệt = ngày đó không tính tiền giờ.
         </p>
-        <button
-          type="button" disabled={busy || !chosen.length} onClick={() => void approve(chosen)}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-slate-900 px-3 text-xs font-semibold text-white disabled:opacity-40"
-        >
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-          Duyệt {chosen.length} ngày đã chọn
-        </button>
+        <span className="inline-flex gap-2">
+          <button
+            type="button" disabled={busy || !pickedOpen.length} onClick={() => void send("reject", pickedOpen)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-300 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+          >
+            <X className="size-3.5" />
+            Không duyệt {pickedOpen.length} ngày
+          </button>
+          <button
+            type="button" disabled={busy || !chosen.length} onClick={() => void send("approve", chosen)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-slate-900 px-3 text-xs font-semibold text-white disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+            Duyệt {chosen.length} ngày đã chọn
+          </button>
+        </span>
       </div>
       {error && <p role="alert" className="whitespace-pre-line border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">{error}</p>}
       <div className="min-h-0 flex-1 overflow-auto">
@@ -81,9 +103,9 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
               <tr>
                 <th className="w-8 px-3 py-2">
                   <input
-                    type="checkbox" aria-label="Chọn tất cả ngày có đủ giờ"
-                    checked={open.filter(ready).length > 0 && open.filter(ready).every((d) => picked.has(keyOf(d)))}
-                    onChange={(e) => setPicked(e.target.checked ? new Set(open.filter(ready).map(keyOf)) : new Set())}
+                    type="checkbox" aria-label="Chọn tất cả ngày"
+                    checked={open.some((d) => !d.pending) && open.filter((d) => !d.pending).every((d) => picked.has(keyOf(d)))}
+                    onChange={(e) => setPicked(e.target.checked ? new Set(open.filter((d) => !d.pending).map(keyOf)) : new Set())}
                   />
                 </th>
                 <th className="px-2 py-2 text-left font-semibold">Tài xế</th>
@@ -102,7 +124,7 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
                   <tr key={k} className="hover:bg-slate-50">
                     <td className="px-3 py-1.5">
                       <input
-                        type="checkbox" aria-label={`Chọn ${shortName(d.driver_name)} ${fmtDay(d.date)}`} disabled={!ready(d)}
+                        type="checkbox" aria-label={`Chọn ${shortName(d.driver_name)} ${fmtDay(d.date)}`} disabled={d.pending}
                         checked={picked.has(k)}
                         onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(k); else n.delete(k); return n; })}
                       />
@@ -124,12 +146,21 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
                     </td>
                     <td className="px-3 py-1.5 text-right">
                       {!d.pending && (
-                        <button
-                          type="button" disabled={busy || !ready(d)} onClick={() => void approve([d])}
-                          className="h-8 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-40"
-                        >
-                          Duyệt
-                        </button>
+                        <span className="inline-flex gap-1.5">
+                          <button
+                            type="button" disabled={busy} onClick={() => void send("reject", [d])}
+                            title="Không tính tiền giờ ngày này"
+                            className="h-8 rounded-md border border-rose-300 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+                          >
+                            Không duyệt
+                          </button>
+                          <button
+                            type="button" disabled={busy || !ready(d)} onClick={() => void send("approve", [d])}
+                            className="h-8 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-40"
+                          >
+                            Duyệt
+                          </button>
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -137,6 +168,26 @@ export function PayNoShiftPanel({ days, onChanged }: { days: NoShiftDay[]; onCha
               })}
             </tbody>
           </table>
+        )}
+        {rejected.length > 0 && (
+          <section className="border-t border-slate-200 px-3 py-2">
+            <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Không duyệt — không tính tiền giờ ({rejected.length})</h3>
+            <ul className="divide-y divide-slate-100 text-sm text-slate-500">
+              {rejected.map((d) => (
+                <li key={keyOf(d)} className="flex items-center gap-3 py-1">
+                  <span className="min-w-0 flex-1 truncate">{shortName(d.driver_name)}</span>
+                  <span className="w-20 tabular-nums">{fmtDay(d.date)}</span>
+                  <span className="w-28 tabular-nums">{span(d.first_in, d.last_out)}</span>
+                  <button
+                    type="button" disabled={busy} onClick={() => void send("undo", [d])}
+                    className="h-7 rounded-md border border-slate-300 px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    Hoàn tác
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </div>
     </div>
