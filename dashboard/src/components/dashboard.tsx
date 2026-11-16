@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Banknote, Bot, Contact, CalendarClock, CalendarDays, ChevronDown, ClipboardList, Clock3, Gauge, MapPin, NotebookText, Power, RefreshCw, Search, Settings2, Truck, UserPlus } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, Contact, CalendarClock, CalendarDays, ChevronDown, ClipboardList, Clock3, Gauge, Loader2, MapPin, NotebookText, Power, RefreshCw, Search, Settings2, Truck, UserPlus } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { RemovedCartrackClients } from "./removed-cartrack-clients";
 import { DataSourceIcon } from "./data-source-icon";
@@ -43,6 +43,11 @@ type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distan
 export function Dashboard() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  /** False until the first status poll answers: the switch shows a neutral "…"
+   *  rather than flashing red TẮT on every page load. */
+  const [statusKnown, setStatusKnown] = useState(false);
+  /** An arm/disarm request is in flight: the switch is disabled and spins. */
+  const [armBusy, setArmBusy] = useState(false);
   const [armUntil, setArmUntil] = useState<number | null>(null);
   const [armedBy, setArmedBy] = useState<string>("");
   const [lastChecked, setLastChecked] = useState<string | null>(null);
@@ -161,6 +166,7 @@ export function Dashboard() {
       const res = await fetch(`/api/assign/status?${qs}`);
       const data = await res.json();
       setIsRunning(!!data.armed);
+      setStatusKnown(true);
       setArmUntil(data.state?.armedUntil ?? null);
       setArmedBy(data.state?.armedBy ?? "");
       setLastChecked(data.lastChecked ?? null);
@@ -492,6 +498,7 @@ export function Dashboard() {
         if (by) localStorage.setItem("dashboard:admin_name", by);
       }
     }
+    setArmBusy(true);
     try {
       const res = await fetch("/api/assign/arm", {
         method: "POST",
@@ -509,6 +516,8 @@ export function Dashboard() {
       toast.success("Đã bật — System tự động chạy đến 22:00");
     } catch {
       toast.error("Không thể bật tự động");
+    } finally {
+      setArmBusy(false);
     }
   }, [env]);
 
@@ -525,19 +534,23 @@ export function Dashboard() {
       if (by) qs.set("by", by);
       if (reason) qs.set("reason", reason);
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
-      await fetch(`/api/assign/arm${suffix}`, { method: "DELETE" });
+      setArmBusy(true);
+      const res = await fetch(`/api/assign/arm${suffix}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(String(res.status));
     } catch {
-      /* best effort — next poll reflects true state */
+      // Not flipped: the switch must not say TẮT while the engine still runs.
+      toast.error("Không tắt được tự động — thử lại");
+      return;
+    } finally {
+      setArmBusy(false);
     }
     setIsRunning(false);
     setArmUntil(null);
     setArmedBy("");
-    toast.info(
-      reason
-        ? "Đã tắt tự động"
-        : "Đã tắt — vẫn TẮT cho tới khi bật lại",
-    );
-  }, []);
+    if (reason) toast.info("Đã tắt tự động");
+    // A manual off is sticky and one click from Đồng bộ — so it carries its undo.
+    else toast.info("Đã tắt — vẫn TẮT cho tới khi bật lại", { action: { label: "Bật lại", onClick: () => void arm() } });
+  }, [arm]);
 
   const toggleService = useCallback((next: boolean) => {
     if (next) arm(); else disarm();
@@ -684,38 +697,48 @@ export function Dashboard() {
   /** Main menu, on the dark header bar. Icons only from 2xl: at 1280–1536px
    *  they are what pushed the bar onto a second line. */
   const navBtn = (active: boolean) =>
-    `min-h-9 px-2.5 text-xs font-semibold rounded transition-colors flex items-center gap-1.5 whitespace-nowrap [&>svg]:hidden 2xl:[&>svg]:block focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-white ${
+    `min-h-9 px-2.5 text-xs font-semibold rounded transition-colors flex items-center gap-1.5 whitespace-nowrap [&>svg]:hidden 2xl:[&>svg]:block outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400 ${
       active ? "bg-white text-slate-900" : "text-slate-300 hover:bg-slate-800 hover:text-white"
     }`;
+  /** Sub-menus (Master Setup, Khoảng cách & Hiệu suất): the main menu's height,
+   *  icon rule and focus ring; the active item wears the header bar's colour so
+   *  it reads as a child of the dark menu above. */
   const tabBtn = (active: boolean) =>
-    `min-h-10 px-3 py-2 text-xs font-semibold rounded transition-colors border flex items-center gap-1.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
+    `min-h-9 px-2.5 text-xs font-semibold rounded transition-colors border flex items-center gap-1.5 whitespace-nowrap [&>svg]:hidden 2xl:[&>svg]:block outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 ${
       active
-        ? "bg-slate-800 text-white border-slate-700"
+        ? "bg-slate-900 text-white border-slate-900"
         : "text-slate-600 border-transparent hover:bg-slate-100 hover:text-slate-900"
     }`;
+  // Engine switch colour: red only when it is OFF during the hours the engine
+  // runs by itself (05:30–22:00, WINDOW_START_MIN/WINDOW_END_MIN in
+  // lib/auto-arm.ts) — inside those hours off means someone is holding it off,
+  // which is the case that leaves jobs unassigned. Off overnight is routine: grey.
+  const vnNowMin = (() => {
+    const [h, m] = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date()).split(":").map(Number);
+    return h * 60 + m;
+  })();
+  const offInRunHours = statusKnown && !isRunning && vnNowMin >= 5 * 60 + 30 && vnNowMin < 22 * 60;
+  const armUntilLabel = armUntil
+    ? new Date(armUntil).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Ho_Chi_Minh" })
+    : "22:00";
+  const switchTitle = !statusKnown ? "Đang kiểm tra trạng thái tự động gán…"
+    : isRunning ? `Tự động gán đang bật đến ${armUntilLabel} — bấm để tắt`
+    : offInRunHours ? "Tự động gán đang TẮT trong giờ chạy (05:30–22:00) — job mới không được gán. Bấm để bật"
+    : "Tự động gán đang tắt ngoài giờ chạy — bấm để bật";
 
   return (
     <div className="flex flex-col min-h-screen lg:h-screen">
 
       {/* Header — wraps to multiple rows on narrow screens */}
       <header className="bg-slate-900 text-white px-3 sm:px-4 py-2 flex flex-wrap items-center gap-x-4 gap-y-2 justify-between shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-base 2xl:text-lg font-semibold truncate">Fleet Auto-Assign</h1>
-          {/* Minimal Service: just the heartbeat */}
-          <ServiceStatus
-            mappingCount={mappingCount}
-            pscRouteCount={pscRouteCount}
-            lastChecked={lastChecked}
-            deployments={deployments}
-          />
-        </div>
+        <h1 className="min-w-0 text-base 2xl:text-lg font-semibold truncate">Fleet Auto-Assign</h1>
 
         {/* The main menu lives IN the header bar: as a row of its own under it, it
-            cost every tab ~55px of height before any content. One line from xl
-            (1280px) up; below that the menu takes the bar's SECOND line, under the
+            cost every tab ~55px of height before any content. One line from 1200px
+            (not xl: a 1920px laptop at 150% scaling is ~1278px wide); below that the menu takes the bar's SECOND line, under the
             title and controls — letting the controls wrap instead left them alone
             on a line of their own with an empty half-bar beside them. */}
-        <nav aria-label="Điều hướng chính" className="order-last basis-full xl:order-none xl:basis-auto xl:flex-1 min-w-0 flex items-center gap-1 overflow-x-auto overflow-y-hidden">
+        <nav aria-label="Điều hướng chính" className="order-last basis-full min-[1200px]:order-none min-[1200px]:basis-auto min-[1200px]:flex-1 min-w-0 flex items-center gap-1 overflow-x-auto overflow-y-hidden">
             <button aria-pressed={rightTab === "attention"} onClick={() => setRightTab("attention")} className={navBtn(rightTab === "attention")}>
               <AlertTriangle aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} />
               Cần xử lý
@@ -742,28 +765,61 @@ export function Dashboard() {
             </button>
         </nav>
         <div className="flex items-center gap-3 sm:gap-4 ml-auto">
-          {/* Auto-assign on/off: ONE power button whose colour is the engine's
-              state (green = running, red = off) — it replaced a "Tự động" label
-              plus a switch to keep the bar on one line. Same one-click toggle;
-              the state is in aria-pressed and the label, not in colour alone. */}
-          <button
-            type="button"
-            aria-pressed={isRunning}
-            aria-label={isRunning ? "Tự động gán: đang bật — bấm để tắt" : "Tự động gán: đang tắt — bấm để bật"}
-            title={isRunning ? "Tự động gán: đang bật — bấm để tắt" : "Tự động gán: đang tắt — bấm để bật"}
-            onClick={() => toggleService(!isRunning)}
-            className={`grid size-9 shrink-0 place-items-center rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
-              isRunning ? "border-emerald-400 bg-emerald-600 text-white hover:bg-emerald-500" : "border-red-400 bg-red-600 text-white hover:bg-red-500"}`}
-          >
-            <Power aria-hidden="true" className="size-4" strokeWidth={2.25} />
-          </button>
+          {/* The engine as one unit: its heartbeat ("Cập nhật 13:48", the last
+              cycle) right beside its on/off switch, so "is it on and alive?" is
+              read in one place rather than across the whole bar. */}
+          <div className="flex items-center gap-2">
+            <ServiceStatus
+              mappingCount={mappingCount}
+              pscRouteCount={pscRouteCount}
+              lastChecked={lastChecked}
+              deployments={deployments}
+            />
+            {/* One pill switch — green "BẬT" knob right while running; red "TẮT"
+                knob left when held off during run hours; grey "TẮT" off overnight;
+                grey "…" until the first poll. Word + knob side carry the state, not
+                colour alone. Disabled and spinning while its request runs. */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={statusKnown ? isRunning : "mixed"}
+              aria-busy={armBusy || undefined}
+              aria-label={`Tự động gán${statusKnown && isRunning ? `, đến ${armUntilLabel}` : offInRunHours ? ", đang tắt trong giờ chạy" : ""}`}
+              title={switchTitle}
+              disabled={!statusKnown || armBusy}
+              onClick={() => toggleService(!isRunning)}
+              className={`relative h-9 w-[5.5rem] shrink-0 rounded-full border shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)] transition-colors motion-reduce:transition-none disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${
+                !statusKnown ? "border-slate-600 bg-slate-700"
+                : isRunning ? "border-emerald-500 bg-emerald-700 hover:bg-emerald-800"
+                : offInRunHours ? "border-red-400 bg-red-600 hover:bg-red-700"
+                : "border-slate-500 bg-slate-700 hover:bg-slate-600"}`}
+            >
+              <span aria-hidden="true" className={`absolute inset-y-0 flex items-center text-xs font-bold tracking-wider ${
+                statusKnown && isRunning ? "left-3.5" : "right-3.5"} ${statusKnown && (isRunning || offInRunHours) ? "text-white" : "text-slate-200"}`}>
+                {!statusKnown ? "…" : isRunning ? "BẬT" : "TẮT"}
+              </span>
+              <span
+                aria-hidden="true"
+                className={`absolute left-[3px] top-[3px] grid size-7 place-items-center rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.45)] transition-transform duration-200 ease-out motion-reduce:transition-none ${
+                  statusKnown && isRunning ? "translate-x-[3.25rem]" : "translate-x-0"}`}
+              >
+                {armBusy || !statusKnown
+                  ? <Loader2 className="size-4 text-slate-500 motion-safe:animate-spin" strokeWidth={2.5} />
+                  : <Power className={`size-4 ${isRunning ? "text-emerald-700" : offInRunHours ? "text-red-600" : "text-slate-500"}`} strokeWidth={2.5} />}
+              </span>
+            </button>
+          </div>
 
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
-              <Button variant="outline" size="sm" className="h-9 gap-2 text-slate-900" disabled={!!syncingSource || syncingMisa}>
+              {/* Quiet on the dark bar: the rarest action (it already runs at 05:00)
+                  was the loudest block on it. The label stays put while syncing —
+                  the icon spins — so the one-line bar never reflows. */}
+              <Button variant="outline" size="sm" className="h-9 gap-2 border-slate-600 bg-transparent text-slate-200 shadow-none hover:bg-slate-800 hover:text-white focus-visible:ring-sky-400/60" disabled={!!syncingSource || syncingMisa} aria-busy={!!syncingSource || syncingMisa || undefined} title={syncingSource || syncingMisa ? "Đang đồng bộ…" : undefined}>
                 <RefreshCw aria-hidden="true" className={`size-4 ${syncingSource || syncingMisa ? "motion-safe:animate-spin" : ""}`} />
-                {syncingSource || syncingMisa ? "Đang đồng bộ…" : <><span className="2xl:hidden">Đồng bộ</span><span className="hidden 2xl:inline">Đồng Bộ Thông Tin</span></>}
-                <ChevronDown aria-hidden="true" className="size-3.5 text-slate-500" />
+                <span className="2xl:hidden">Đồng bộ</span><span className="hidden 2xl:inline">Đồng Bộ Thông Tin</span>
+                {(syncingSource || syncingMisa) && <span className="sr-only">: đang đồng bộ</span>}
+                <ChevronDown aria-hidden="true" className="size-3.5 text-slate-400" />
               </Button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
@@ -786,6 +842,21 @@ export function Dashboard() {
           the landing tab, Live Log is just the log). */}
       <div className="flex flex-col lg:flex-1 lg:min-h-0 p-2 sm:p-3">
         <div className="min-w-0 flex flex-col gap-1.5 lg:flex-1 lg:min-h-0">
+          {/* Sub-menus sit right under the bar, ABOVE the warning banners — below
+              them a banner pushed the sub-menu away from the menu it belongs to. */}
+          {setupActive && <nav aria-label="Master Setup" className="flex flex-wrap items-center gap-1 shrink-0">
+            {([
+              ["config", ClipboardList, "Config"], ["schedule", CalendarClock, "Lịch cố định"],
+              ["shifts", Clock3, "Bảng ca"], ["drivers", Contact, "Tài xế"], ["sunday", CalendarDays, "Lịch Chủ nhật"], ["locations", MapPin, "Địa điểm PSC"],
+              ["tpl", Truck, "3PL Mapping"], ["bots", Bot, "Bot khách hàng"], ["newcustomer", UserPlus, "Tạo Mới KH"],
+            ] as const).map(([tab, Icon, label]) => <button key={tab} aria-pressed={rightTab === tab} onClick={() => setRightTab(tab)} className={tabBtn(rightTab === tab)}>
+              <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> {label}
+            </button>)}
+          </nav>}
+          {operationsActive && <nav aria-label="Khoảng cách và Hiệu suất" className="flex flex-wrap items-center gap-1 shrink-0">
+            <button aria-pressed={rightTab === "distance"} onClick={() => setRightTab("distance")} className={tabBtn(rightTab === "distance")}>Khoảng cách</button>
+            <button aria-pressed={rightTab === "tat"} onClick={() => setRightTab("tat")} className={tabBtn(rightTab === "tat")}>Hiệu suất</button>
+          </nav>}
           {syncFailure && (
             <p role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-900 shrink-0">
               <span className="font-semibold">
@@ -830,19 +901,6 @@ export function Dashboard() {
               </div>}
             </details>
           )}
-          {setupActive && <nav aria-label="Master Setup" className="flex flex-wrap items-center gap-1 shrink-0 border-b border-slate-200 pb-1.5">
-            {([
-              ["config", ClipboardList, "Config"], ["schedule", CalendarClock, "Lịch cố định"],
-              ["shifts", Clock3, "Bảng ca"], ["drivers", Contact, "Tài xế"], ["sunday", CalendarDays, "Lịch Chủ nhật"], ["locations", MapPin, "Địa điểm PSC"],
-              ["tpl", Truck, "3PL Mapping"], ["bots", Bot, "Bot khách hàng"], ["newcustomer", UserPlus, "Tạo Mới KH"],
-            ] as const).map(([tab, Icon, label]) => <button key={tab} aria-pressed={rightTab === tab} onClick={() => setRightTab(tab)} className={tabBtn(rightTab === tab)}>
-              <Icon aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> {label}
-            </button>)}
-          </nav>}
-          {operationsActive && <nav aria-label="Khoảng cách và Hiệu suất" className="flex flex-wrap items-center gap-1 shrink-0 border-b border-slate-200 pb-1.5">
-            <button aria-pressed={rightTab === "distance"} onClick={() => setRightTab("distance")} className={tabBtn(rightTab === "distance")}>Khoảng cách</button>
-            <button aria-pressed={rightTab === "tat"} onClick={() => setRightTab("tat")} className={tabBtn(rightTab === "tat")}>Hiệu suất</button>
-          </nav>}
 
           {/* Tab content. On mobile the page flows + scrolls (definite heights so
               each panel's ScrollArea renders); on lg it's a fixed flex-fill. */}

@@ -53,7 +53,8 @@ export function ServiceStatus({ mappingCount, pscRouteCount, lastChecked, deploy
           : "border-red-500/40 bg-red-500/15 text-red-300"
       }`}
     >
-      <span className={`w-2 h-2 rounded-full ${fresh ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
+      <span aria-hidden="true" className={`w-2 h-2 rounded-full ${fresh ? "bg-green-400 motion-safe:animate-pulse" : "bg-red-400"}`} />
+      <span className="sr-only">{fresh ? "Hệ thống đang chạy," : "Mất tín hiệu hệ thống,"}</span>
       <span className="hidden sm:inline">Cập nhật</span>
       <span>{lastCheckedLabel ?? "—"}</span>
       {deployments.length > 1 && (
