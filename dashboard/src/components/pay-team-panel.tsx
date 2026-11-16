@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, AlertCircle, CheckCircle2, Download, ChevronLeft, ChevronRight, ChevronDown, Search, X, Upload } from "lucide-react";
+import { Loader2, AlertCircle, Check, CheckCircle2, Clock, Download, ChevronLeft, ChevronRight, ChevronDown, Search, X, Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import { parsePayrollSheet } from "@/lib/pay-shifts";
 import { foldName } from "@/lib/driver-cell";
@@ -257,10 +257,11 @@ function DriverDays({ month, driverId, total }: { month: string; driverId: strin
   if (!days.length) return <p className="px-4 py-3 text-sm text-slate-500">Không có ngày làm trong kỳ.</p>;
   return (
     // No overflow wrapper: it would become the scroll container and break the
-    // sticky header. Auto width + indent so the day columns read as their own
+    // sticky header. Full width (a compact table left half the screen empty),
+    // indented and bordered as its own card so the day columns read as their own
     // table, not as cells under the month columns above.
     <div className="py-2 pl-10 pr-3">
-      <table className="w-auto text-xs bg-white border border-slate-200">
+      <table className="w-full text-xs bg-white border border-slate-200 shadow-sm">
         {/* Sticky stack while a driver is open: month header (h-9 = 36px) → the
           driver's row (h-10 = 40px) → this header at 76px. */}
         <thead className="sticky top-[76px] z-[5] bg-slate-100 text-left text-xs text-slate-600">
@@ -481,13 +482,14 @@ export function PayTeamPanel() {
 
   return (
     <div className="h-full flex flex-col rounded-xl border border-slate-200 bg-white overflow-hidden">
-      {/* Month navigator, with the period it really means under the name
-          ("Tháng 11" pays 15/10–14/11), then the tools as one group. */}
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-200 shrink-0">
+      {/* Toolbar, one row: the month (with the period it really pays — "Tháng 11"
+          is 15/10–14/11), the month's figures, then the tools. The figures were
+          five 80px tiles of their own, a sixth of a laptop screen. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 border-b border-slate-200 shrink-0">
         <div className="flex items-center gap-1">
           <button
             onClick={() => setMonth(shiftMonth(month, -1))}
-            className="size-11 grid place-items-center rounded-lg text-slate-600 hover:bg-slate-100"
+            className="size-11 sm:size-9 grid place-items-center rounded-lg text-slate-600 hover:bg-slate-100"
             title="Tháng trước"
           >
             <ChevronLeft className="size-4" />
@@ -503,24 +505,44 @@ export function PayTeamPanel() {
           <button
             onClick={() => setMonth(shiftMonth(month, 1))}
             disabled={month >= defaultMonth()}
-            className="size-11 grid place-items-center rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+            className="size-11 sm:size-9 grid place-items-center rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40"
             title="Tháng sau"
           >
             <ChevronRight className="size-4" />
           </button>
         </div>
+        {data && data.drivers.length > 0 && (
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5">
+          {[
+              ["Tổng chi", fmtVnd(data.totals.total_pay), `${fmtVnd(data.totals.hour_pay)} giờ + ${fmtVnd(data.totals.km_pay)} km`],
+              ["Tài xế PT", String(data.driver_count), ""],
+              ["Giờ", fmtHours(data.totals.worked_mins), ""],
+              ["Km tính tiền", fmtKm(data.totals.km), "Quãng đường lấy mẫu → giao mẫu của các chuyến được tính tiền"],
+              // The fleet average, and the point of the two columns below: it is the
+              // whole wage bill over every kilometre actually ridden, so it answers
+              // "what do we pay per kilometre" rather than "what is the rate".
+              ["đ/km thực", fmtRate(realRate(data.totals.total_pay - data.totals.bo_pay, data.totals.real_km)),
+               `Tổng chi (giờ + km), trừ ${fmtVnd(data.totals.bo_pay)} giờ BO Runner, ÷ ${fmtKm(data.totals.real_km)} km thực chạy`],
+            ].map(([label, value, hint]) => (
+              <p key={label} className="whitespace-nowrap" title={hint || undefined}>
+                <span className={`tabular-nums ${label === "Tổng chi" ? "text-lg font-bold text-slate-900" : "text-sm font-semibold text-slate-800"}`}>{value}</span>{" "}
+                <span className="text-xs text-slate-600">{label}</span>
+              </p>
+            ))}
+          </div>
+        )}
         <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
         {/* Driver search. 80+ PT drivers is more than a screen, and the list is
             sorted by money owed, so finding one person means scrolling and
             reading. Typing beats scrolling; the code works as well as the name. */}
-        <div className="relative min-w-0 flex-1 sm:flex-none sm:w-56">
+        <div className="relative min-w-0 flex-1 sm:flex-none sm:w-48">
           <Search className="size-3.5 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Tìm tài xế..."
             aria-label="Tìm tài xế"
-            className="w-full min-h-11 text-xs border border-slate-300 rounded-lg pl-7 pr-7 py-1.5 text-slate-700 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-300"
+            className="w-full min-h-11 sm:min-h-9 text-xs border border-slate-300 rounded-lg pl-7 pr-7 py-1.5 text-slate-700 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-300"
           />
           {q && (
             <button
@@ -535,13 +557,13 @@ export function PayTeamPanel() {
         <button
           onClick={exportCsv}
           disabled={!data || data.drivers.length === 0 || exporting}
-          className="flex items-center gap-1.5 min-h-11 text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg px-3 hover:bg-slate-50 disabled:opacity-40"
+          className="flex items-center gap-1.5 min-h-11 sm:min-h-9 text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg px-3 hover:bg-slate-50 disabled:opacity-40"
         >
           <Download className="size-3.5" />
           CSV
         </button>
         <label
-          className={`flex items-center gap-1.5 min-h-11 text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg px-3 hover:bg-slate-50 cursor-pointer ${importing ? "opacity-40 pointer-events-none" : ""}`}
+          className={`flex items-center gap-1.5 min-h-11 sm:min-h-9 text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg px-3 hover:bg-slate-50 cursor-pointer ${importing ? "opacity-40 pointer-events-none" : ""}`}
           title="File chấm công bán thời gian của phòng lương (…_Parttime Records.xlsx) — ghi ca vào Lịch ca tài xế"
         >
           {importing ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
@@ -560,139 +582,94 @@ export function PayTeamPanel() {
         <p role="status" className="px-3 py-2 text-xs text-slate-700 bg-slate-50 border-b border-slate-200">{importNote}</p>
       )}
 
-      {/* Fleet totals. The money leads, because that is what this panel is for. */}
-      {data && data.drivers.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-slate-200 border-b border-slate-200 shrink-0 [&>*:first-child]:col-span-2 sm:[&>*:first-child]:col-span-1">
-          {[
-            ["Tổng chi", fmtVnd(data.totals.total_pay), `${fmtVnd(data.totals.hour_pay)} giờ + ${fmtVnd(data.totals.km_pay)} km`],
-            ["Tài xế PT", String(data.driver_count), ""],
-            ["Giờ", fmtHours(data.totals.worked_mins), ""],
-            ["Km tính tiền", fmtKm(data.totals.km), "Quãng đường lấy mẫu → giao mẫu của các chuyến được tính tiền"],
-            // The fleet average, and the point of the two columns below: it is the
-            // whole wage bill over every kilometre actually ridden, so it answers
-            // "what do we pay per kilometre" rather than "what is the rate".
-            ["đ/km thực", fmtRate(realRate(data.totals.total_pay - data.totals.bo_pay, data.totals.real_km)),
-             `Tổng chi (giờ + km), trừ ${fmtVnd(data.totals.bo_pay)} giờ BO Runner, ÷ ${fmtKm(data.totals.real_km)} km thực chạy`],
-          ].map(([label, value, hint]) => (
-            <div key={label} className="bg-white px-2 py-2 text-center" title={hint || undefined}>
-              <p className="text-base font-bold text-slate-800 leading-tight">{value}</p>
-              <p className="text-xs text-slate-600">{label}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* The period's state in one line: data missing (red) → days still to decide
-          (neutral) → ready (green). Incomplete coverage comes first: every figure
-          below is short until it clears. */}
-      {data && data.drivers.length > 0 && data.coverage.ready && openDays > 0 && (
-        <div className="flex items-start gap-2 text-xs text-slate-700 bg-slate-50 border-b border-slate-200 px-3 py-2 shrink-0">
-          <AlertCircle className="size-3.5 mt-0.5 shrink-0 text-slate-500" />
-          <span>
-            Đủ dữ liệu kỳ này. Còn{" "}
-            {data.totals.no_shift_days > 0 && (
-              <button onClick={() => setView("noshift")} className="font-semibold underline underline-offset-2 hover:text-slate-950">
-                {data.totals.no_shift_days} ngày không ca
-              </button>
-            )}
-            {data.totals.no_shift_days > 0 && data.totals.suspect_days > 0 && " · "}
-            {data.totals.suspect_days > 0 && (
-              <button onClick={() => setView("suspect")} className="font-semibold underline underline-offset-2 hover:text-slate-950">
-                {data.totals.suspect_days} ngày nghi vấn
-              </button>
-            )}{" "}
-            cần xử lý trước khi chạy lương.
-          </span>
-        </div>
-      )}
-      {data && data.drivers.length > 0 && data.coverage.ready && openDays === 0 && (
-        <div role="status" className="flex items-start gap-2 text-xs text-emerald-900 bg-emerald-50 border-b border-emerald-200 px-3 py-2 shrink-0">
-          <CheckCircle2 className="size-3.5 mt-0.5 shrink-0 text-emerald-700" />
-          <span><strong>Sẵn sàng chạy lương.</strong> Đủ dữ liệu, không còn ngày không ca hay nghi vấn chưa xử lý.</span>
-        </div>
-      )}
-      {data && !data.coverage.ready && (
-        <div className="flex items-start gap-2 text-xs text-red-800 bg-red-50 border-b border-red-200 px-3 py-2 shrink-0">
-          <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
-          <span>
-            <strong>Chưa đủ dữ liệu — chưa duyệt lương kỳ này.</strong>{" "}
-            {!data.coverage.period_closed && "Kỳ lương chưa kết thúc. "}
-            {data.coverage.pending_corrections > 0 && `${data.coverage.pending_corrections} yêu cầu cập nhật công chờ duyệt. `}
-            {data.coverage.missing_days.length > 0 &&
-              `Thiếu ${data.coverage.missing_days.length}/${data.coverage.expected_days} ngày: ${data.coverage.missing_days.map((d) => d.slice(8, 10) + "/" + d.slice(5, 7)).join(", ")}. `}
-            {data.totals.unpriced_jobs > 0 && `${data.totals.unpriced_jobs} chuyến chưa có km (đang tính 0đ).`}
-          </span>
-        </div>
-      )}
-
-      {/* The four lists of the month, side by side. Each count is what is still
-          open there, so the row doubles as the pre-payroll to-do list. */}
+      {/* Status row: where the month stands, then the three lists that hold it
+          up — each a button with its open count, or a tick once cleared. It is
+          the only way into those lists (no tab row: the status and the tabs said
+          the same thing twice), and "‹ Bảng lương" leads back. Red only for what
+          blocks the numbers themselves — missing days, trips without km. */}
       {data && (
-        <div role="tablist" aria-label="Danh sách lương PT" className="flex gap-1 overflow-x-auto px-2 border-b border-slate-200 shrink-0">
-          {([
-            ["pay", "Bảng lương", 0, ""],
-            ["noshift", "Không ca", data.totals.no_shift_days, "bg-amber-700"],
-            ["suspect", "Nghi vấn", data.totals.suspect_days, "bg-rose-600"],
-            ["corrections", "Cập nhật công", data.coverage.pending_corrections, "bg-amber-700"],
-          ] as [PayView, string, number, string][]).map(([id, label, count, badge]) => (
+        <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-slate-200 shrink-0">
+          {view !== "pay" && (
             <button
-              key={id}
-              role="tab"
-              aria-selected={view === id}
-              onClick={() => setView(id)}
-              className={`flex items-center gap-1.5 whitespace-nowrap px-3 min-h-11 text-sm border-b-2 -mb-px focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-slate-500 ${
-                view === id ? "border-slate-900 font-semibold text-slate-900" : "border-transparent text-slate-600 hover:text-slate-900"}`}
+              type="button"
+              onClick={() => setView("pay")}
+              className="flex items-center gap-1 min-h-11 sm:min-h-9 rounded-lg border border-slate-300 pl-2 pr-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              {label}
-              {count > 0 && (
-                <span className={`rounded-full ${badge} text-white text-xs leading-none px-1.5 py-0.5 tabular-nums`}>{count}</span>
-              )}
+              <ChevronLeft className="size-3.5" aria-hidden /> Bảng lương
             </button>
-          ))}
-        </div>
-      )}
-
-      {/* The one thing here that is a to-do rather than a report. Gone at 0: a
-          finished list is not a warning, and declined days stay reachable from
-          the Không ca tab (Hoàn tác). */}
-      {data && view === "pay" && data.totals.no_shift_days > 0 && (
-        <div className="flex items-start gap-2 text-xs text-amber-900 bg-amber-50 border-b border-amber-200 px-3 py-2 shrink-0">
-          <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
-          <span>
-            {data.totals.no_shift_days} ngày tài xế có chấm công hoặc chạy chuyến nhưng
-            không có ca trong Lịch ca — <strong>không tính tiền giờ</strong>.{" "}
-            {/* The banner IS the filter. Telling a supervisor to eye-scan 82 rows for
-                a low-contrast digit is not a to-do, it is a search task. */}
-            <button
-              onClick={() => setOnlyFlagged((v) => !v)}
-              className="font-semibold underline underline-offset-2 hover:text-amber-950"
-            >
-              {onlyFlagged
-                ? "Hiện tất cả tài xế"
-                : `Chỉ hiện ${data.drivers.filter((d) => d.no_shift_days > 0).length} tài xế cần kiểm tra`}
-            </button>{" · "}
-            <button onClick={() => setView("noshift")} className="font-semibold underline underline-offset-2 hover:text-amber-950">
-              Sửa nhanh
-            </button>
-          </span>
-        </div>
-      )}
-
-      {/* Same shape as Không ca: a count, a filter, a list. The pay rule already
-          stops a dragged ride at its due time; this is who to talk to. */}
-      {data && view === "pay" && data.totals.suspect_days > 0 && (
-        <div className="flex items-start gap-2 text-xs text-rose-900 bg-rose-50 border-b border-rose-200 px-3 py-2 shrink-0">
-          <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
-          <span>
-            {data.totals.suspect_days} ngày nghi vấn kéo dài giờ chưa xử lý: chuyến cuối chậm bất thường, hoàn thành
-            sau khi chấm công ra, hoặc mở geofence.{" "}
-            <button onClick={() => setOnlyLate((v) => !v)} className="font-semibold underline underline-offset-2 hover:text-rose-950">
-              {onlyLate ? "Hiện tất cả tài xế" : `Chỉ hiện ${data.drivers.filter((d) => d.suspect_days > 0).length} tài xế`}
-            </button>{" · "}
-            <button onClick={() => setView("suspect")} className="font-semibold underline underline-offset-2 hover:text-rose-950">
-              Xem danh sách
-            </button>
-          </span>
+          )}
+          {data.drivers.length > 0 && (() => {
+            const missing = data.coverage.missing_days.length > 0 || data.totals.unpriced_jobs > 0;
+            if (missing) return (
+              <p className="flex items-start gap-1.5 text-xs text-red-800">
+                <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
+                <span>
+                  <strong>Chưa đủ dữ liệu:</strong>{" "}
+                  {[
+                    data.coverage.missing_days.length > 0 &&
+                      `thiếu ${data.coverage.missing_days.length}/${data.coverage.expected_days} ngày (${data.coverage.missing_days.map((d) => d.slice(8, 10) + "/" + d.slice(5, 7)).join(", ")})`,
+                    data.totals.unpriced_jobs > 0 && `${data.totals.unpriced_jobs} chuyến chưa có km, đang tính 0đ`,
+                  ].filter(Boolean).join(" · ")}
+                </span>
+              </p>
+            );
+            if (!data.coverage.period_closed) return (
+              <p className="flex items-center gap-1.5 text-xs text-slate-600">
+                <Clock className="size-3.5 shrink-0" /> Kỳ lương chưa kết thúc
+              </p>
+            );
+            if (data.coverage.ready && openDays === 0) return (
+              <p role="status" className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
+                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-700" /> Sẵn sàng chạy lương
+              </p>
+            );
+            return <p className="text-xs text-slate-600">Còn việc trước khi chạy lương:</p>;
+          })()}
+          <nav aria-label="Việc cần xử lý trước khi chạy lương" className="flex flex-wrap items-center gap-1.5">
+            {([
+              ["noshift", "Không ca", data.totals.no_shift_days, "bg-amber-700"],
+              ["suspect", "Nghi vấn", data.totals.suspect_days, "bg-rose-600"],
+              ["corrections", "Cập nhật công", data.coverage.pending_corrections, "bg-amber-700"],
+            ] as [PayView, string, number, string][]).map(([id, label, count, badge]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={view === id}
+                aria-label={count > 0 ? `${label}: còn ${count}` : `${label}: đã xử lý hết`}
+                onClick={() => setView(view === id ? "pay" : id)}
+                className={`flex items-center gap-1.5 whitespace-nowrap min-h-11 sm:min-h-9 rounded-lg border px-3 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 ${
+                  view === id ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+              >
+                {label}
+                {count > 0
+                  ? <span className={`rounded-full ${badge} text-white text-xs leading-none px-1.5 py-0.5 tabular-nums`}>{count}</span>
+                  : <Check className={`size-3.5 ${view === id ? "text-white" : "text-emerald-700"}`} aria-hidden />}
+              </button>
+            ))}
+          </nav>
+          {/* Driver filters, as toggles that stay in sight while on — a filter
+              hidden inside a banner emptied the table with no visible cause. */}
+          {view === "pay" && (data.totals.no_shift_days > 0 || data.totals.suspect_days > 0) && (
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-slate-600">Chỉ hiện tài xế</span>
+              {([
+                ["có ngày không ca", data.totals.no_shift_days > 0, onlyFlagged, setOnlyFlagged],
+                ["có ngày nghi vấn", data.totals.suspect_days > 0, onlyLate, setOnlyLate],
+              ] as [string, boolean, boolean, (f: (v: boolean) => boolean) => void][]).filter(([, show]) => show).map(([label, , on, set]) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => set((v) => !v)}
+                  className={`flex items-center gap-1 min-h-11 sm:min-h-9 rounded-lg border px-3 text-xs font-semibold ${
+                    on ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                >
+                  {on && <Check className="size-3.5" aria-hidden />}
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -764,8 +741,9 @@ export function PayTeamPanel() {
             {q ? `Không có tài xế nào khớp "${q}".` : onlyFlagged && data.totals.no_shift_days > 0 ? "Không có tài xế nào làm ngoài ca." : "Không có tài xế nào có ngày nghi vấn."}
           </p>
         ) : (
-          // Capped: on a wide screen the name and its last figure sat ~1,900px apart.
-          <table className="w-full max-w-6xl text-sm">
+          // Full width, like the tiles and tabs above it. The flag columns sit
+          // beside the name, so the row still reads from the left.
+          <table className="w-full text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50 text-slate-600 text-xs">
               <tr className="h-9">
                 <th className="text-left font-semibold px-3 py-2">Tài xế</th>
