@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { bookedStatus, cancelBlock, chainFrom, deliverTodo, directVerdict, isNear, collectVerdict, handoverTarget, itemsText, legTodos, legVerdict, nearest, planDelivery, rankWithHolderFirst, rideFor, smartCollector, pickupDriverAt, KQVT_VIA, nearCollector, openJobs, servedPscs, waitingTooLong, WAIT_ALERT_MS, type KqvtEntry } from "../src/lib/kqvt";
 import { returnRideable } from "../src/lib/return-trips";
+import { orderWithStopsNext } from "../src/lib/cartrack";
 import { PSC_ROUTES } from "../src/lib/psc-routes-data";
 import { PSC_DELIVERY_LABEL, PSC_RETURN_LABEL } from "../src/lib/job-filters";
 import type { Job, Mapping } from "../src/lib/types";
@@ -243,5 +244,15 @@ assert.equal(await isNear({ lat: 10.775, lon: 106.673 }, null), false);
   assert.deepEqual(new Set(servedPscs(id("D002"))), new Set(["D002", "D026", "D027", "D044"].map(id)));
   assert.deepEqual(servedPscs(id("D009")), [id("D009")]);
   assert.ok(!servedPscs(id("D001")).includes(id("D009")));
+}
+// The KQ/VT pickup becomes the driver's next stop: after everything done or under way,
+// ahead of every stop not started (the sample pickup it rides with among them).
+{
+  const r = (...xs: [number, number][]) => xs.map(([stopId, stopStatusId]) => ({ stopId, stopStatusId }));
+  assert.deepEqual(orderWithStopsNext(r([1, 4], [2, 3], [3, 1], [4, 1], [9, 1]), [9]), [1, 2, 9, 3, 4]);
+  assert.equal(orderWithStopsNext(r([1, 4], [9, 1], [3, 1]), [9]), null); // already next
+  assert.equal(orderWithStopsNext(r([1, 4], [3, 1]), [9]), null); // not on the route
+  assert.deepEqual(orderWithStopsNext(r([1, 4], [2, 4], [9, 1]), [9]), null); // nothing else left
+  assert.deepEqual(orderWithStopsNext(r([3, 1], [1, 4], [9, 1]), [9]), [9, 3, 1]);
 }
 console.log("kqvt: ok");

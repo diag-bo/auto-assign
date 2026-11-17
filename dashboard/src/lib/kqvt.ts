@@ -40,7 +40,7 @@
  * one — verified on throwaway prod jobs 2026-10-18. Only a stop still "Chờ lấy" is ever
  * touched, so no photo a driver already took is at stake.
  */
-import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, updateJobSendToDriverAt, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
+import { BASE_URL, PROXY_DRIVER_ID, assignJob, cancelJob, createJob, moveStopsToNext, updateJobSendToDriverAt, jobVnDate, getHeaders, getJobDetails, getLiveDrivers, updateJobStops, type Env } from "./cartrack";
 import { sharedRedis } from "./redis";
 import { haversineKm } from "./distance";
 import { MAX_OPEN_TASKS, openTasks } from "./smart-rank";
@@ -52,7 +52,7 @@ import { PSC_TABLE } from "./psc-closing";
 import { shortCode } from "./psc-dup";
 import { returnRideable, shiftMappingsForPsc, subToCoveredDriver } from "./return-trips";
 import { sbSelect } from "./supabase-rest";
-import { parseVnTimestamp, vnHoursMinutes, vnMinutesSinceMidnight, vnTimestamp } from "./time";
+import { parseVnTimestamp, vnDate, vnHoursMinutes, vnMinutesSinceMidnight, vnTimestamp } from "./time";
 import type { Config, FailedJob, Job, LogLevel, TimelineStop } from "./types";
 import type { LeaveEntry } from "./leave-config";
 
@@ -894,6 +894,14 @@ export async function kqvtCycle(
           e.near_pickup = near || undefined;
           await savePending(e);
           log(`Job ${e.job_id} - lấy KQ/VT tại PSC: ${who.name ?? "tài xế"} (đang ở PSC, có chuyến lấy mẫu ${near ? `cách khách dưới ${NEAR_PICKUP_KM} km` : "tại khách"}) | ${e.psc_name} → ${e.client_name}`, "OK");
+          // They are at the PSC: make the KQ/VT pickup their next stop, ahead of the
+          // sample pickup it rides with (supervisor, 2026-11-16) — Cartrack appends a
+          // newly assigned job to the end of the route.
+          const stopId = Number(collect.stops?.[0]?.stop_id);
+          if (stopId) {
+            const moved = await moveStopsToNext(who.driverId, [stopId], vnDate(), env).catch(() => "failed" as const);
+            if (moved === "failed") log(`Job ${e.job_id} - KQ/VT: chưa đưa được lên điểm kế tiếp của tài xế | ${e.psc_name} → ${e.client_name}`, "WARN");
+          }
         } else if (!parked) {
           await parkCollect(e.job_id, env).catch(() => null);
           // Its old driver (rolled over) no longer has it: /qr says it waits, not "Chờ <name>".

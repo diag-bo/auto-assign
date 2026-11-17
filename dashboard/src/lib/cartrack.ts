@@ -1742,6 +1742,37 @@ export async function optimizeDriverRoute(
   return out.ok;
 }
 
+/** A driver's route order with `stopIds` moved to just before the first stop not yet
+ *  started — the next thing they do. Null when the stops are missing from the route or
+ *  already sit there. Pure, for moveStopsToNext. */
+export function orderWithStopsNext(route: { stopId: number; stopStatusId: number }[], stopIds: number[]): number[] | null {
+  const ids = route.map((s) => s.stopId);
+  if (!stopIds.length || !stopIds.every((id) => ids.includes(id))) return null;
+  const rest = route.filter((s) => !stopIds.includes(s.stopId));
+  const at = rest.findIndex((s) => s.stopStatusId === 1);
+  const pos = at < 0 ? rest.length : at;
+  const out = [...rest.slice(0, pos).map((s) => s.stopId), ...stopIds, ...rest.slice(pos).map((s) => s.stopId)];
+  return out.every((id, i) => id === ids[i]) ? null : out;
+}
+
+/** Make `stopIds` the driver's next stops in Cartrack (delivery_route_stops_set_order —
+ *  the call fleetweb's map sends when a stop is dragged, captured 2026-11-16). It names
+ *  every stop on the route, so the route is re-read first. "same" = already in place. */
+export async function moveStopsToNext(driverId: string, stopIds: number[], dateVn: string, env: Env = "prod"): Promise<"ok" | "same" | "failed"> {
+  const routes = await getTimelineRoutes(dateVn, env);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const route = (routes as any[] | null)?.find((r) => r?.routeId === `driver_${driverId}`);
+  if (!route) return "failed";
+  const order = orderWithStopsNext(route.orderedStops ?? [], stopIds);
+  if (!order) return (route.orderedStops ?? []).some((s: { stopId: number }) => stopIds.includes(s.stopId)) ? "same" : "failed";
+  const out = await jsonRpc(
+    "delivery_route_stops_set_order",
+    { data: { group: `driver_${driverId}`, orderedStopIds: order, scheduleType: "scheduled", filter: vnDayWindow(dateVn) } },
+    { env },
+  );
+  return out.ok ? "ok" : "failed";
+}
+
 /** One job via fleetweb `delivery_get_job_details` (~0.1s) instead of REST GET /jobs/{id}
  *  (~4s, measured 2026-09-17), in the REST spelling — top level, stops, and each stop's
  *  nested `customer` (the live name; the flat stop.customer_name goes stale after a dropoff
