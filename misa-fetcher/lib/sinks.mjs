@@ -24,3 +24,16 @@ export async function pushSupabase(records, range) {
   const written=await res.json();log(`Supabase: synced ${written} rows; manual edits preserved`);
   return {written};
 }
+
+/** Replace the saved "waiting for approval" overtime list (one row). */
+export async function saveOvertimeSnapshot(rows) {
+  const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY required");
+  const res = await fetch(`${url.replace(/\/$/, "")}/rest/v1/misa_overtime_snapshot?on_conflict=id`, {
+    method: "POST", signal: AbortSignal.timeout(30000),
+    headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ id: "pending", rows, fetched_at: new Date().toISOString() }),
+  });
+  if (!res.ok) throw new Error(`overtime snapshot HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  log(`Supabase: overtime snapshot, ${rows.length} request(s)`);
+}

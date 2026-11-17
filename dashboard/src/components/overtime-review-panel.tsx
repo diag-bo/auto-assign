@@ -6,8 +6,9 @@
  * clock-ins, the shift, Lịch Chủ nhật and leave. Review only — approving still
  * happens in MISA.
  *
- * Reading MISA means a browser login on the server (~30 s), so the answer is kept
- * for the life of the page: switching tabs does not read it again, "Tải lại" does.
+ * The list is the copy the morning MISA sync saved, so opening is quick; "Tải
+ * lại" reads MISA live (~30 s) and replaces that copy. The answer is kept for the
+ * life of the page, so switching tabs does not read it again.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -46,10 +47,10 @@ export function OvertimeReviewPanel() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | Status>("all");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (live: boolean) => {
     setLoading(true); setError(null);
     try {
-      const res = await fetch("/api/overtime", { cache: "no-store" });
+      const res = await fetch(`/api/overtime${live ? "?live=1" : ""}`, { cache: "no-store" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
       cached = body as Report; setData(cached);
@@ -57,7 +58,7 @@ export function OvertimeReviewPanel() {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setLoading(false); }
   }, []);
-  useEffect(() => { if (!cached) void load(); }, [load]);
+  useEffect(() => { if (!cached) void load(false); }, [load]);
 
   const counts = useMemo(() => {
     const c: Record<Status, number> = { bad: 0, warn: 0, unchecked: 0, ok: 0 };
@@ -89,12 +90,12 @@ export function OvertimeReviewPanel() {
         </div>}
         <div className="ml-auto flex items-center gap-2">
           {data && <span className="text-xs text-slate-600 tabular-nums">
-            Đọc lúc {new Date(data.fetched_at).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })}
+            Đọc MISA lúc {new Date(data.fetched_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}
           </span>}
-          <button onClick={() => void load()} disabled={loading}
+          <button onClick={() => void load(true)} disabled={loading} title="Đọc lại từ MISA (khoảng 30 giây)"
             className="flex items-center gap-1.5 min-h-11 sm:min-h-9 rounded-lg border border-slate-300 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
             {loading ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <RefreshCw className="size-4" aria-hidden="true" />}
-            Tải lại
+            {loading && data ? "Đang đọc MISA…" : "Tải lại"}
           </button>
         </div>
       </div>
@@ -107,7 +108,7 @@ export function OvertimeReviewPanel() {
         )}
         {loading && !data && (
           <p className="flex items-center gap-2 p-6 text-sm text-slate-600">
-            <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Đang đăng nhập MISA và đọc đơn (khoảng 30 giây)…
+            <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Đang tải đơn tăng ca…
           </p>
         )}
         {data && !rows.length && <p className="p-6 text-sm text-slate-600">Không có đơn nào{filter !== "all" ? " ở mục này" : " chờ duyệt"}.</p>}

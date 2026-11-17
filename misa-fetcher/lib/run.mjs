@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createSession, ensureLoggedIn, fetchOvertime, fetchAllShifts, fetchAllAttendance, fetchTimesheetList, fetchTimesheetDetail } from "./misa.mjs";
 import { monthRange, buildLeaveMap, parseShifts, pickTimesheets, parseTimesheetShifts } from "./parse.mjs";
-import { pushSupabase } from "./sinks.mjs";
+import { pushSupabase, saveOvertimeSnapshot } from "./sinks.mjs";
 import {
   loadDrivers,
   driversByEmployeeCode,
@@ -52,6 +52,13 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
 
   try {
     await ensureLoggedIn(page, context, creds, range, STATE_PATH);
+
+    // Overtime waiting for approval, saved for the dashboard's Tăng ca tab while
+    // the session is open anyway. Never the reason the sync fails.
+    if (!DRY_RUN) {
+      try { await saveOvertimeSnapshot(await fetchOvertime(page, 1)); }
+      catch (e) { console.warn(`[run] ⚠ overtime list not saved: ${e.message}`); }
+    }
 
     const shiftData = await fetchAllShifts(page, range);
     // The attendance endpoint filters by year, so a span crossing Dec→Jan needs
@@ -310,7 +317,9 @@ export async function readPendingOvertime({ creds, chromium, launchOptions, stat
   const { browser, context, page } = await createSession({ chromium, launchOptions, statePath });
   try {
     await ensureLoggedIn(page, context, creds, monthRange(), statePath);
-    return await fetchOvertime(page, 1);
+    const rows = await fetchOvertime(page, 1);
+    await saveOvertimeSnapshot(rows).catch((e) => console.warn(`[misa] overtime snapshot not saved: ${e.message}`));
+    return rows;
   } finally {
     await browser.close();
   }

@@ -3,12 +3,15 @@
  * dashboard holds for its hours (lib/overtime.ts). READ ONLY: approving still
  * happens in MISA.
  *
- * Every call logs into MISA through the same headless browser the morning sync
- * uses (~20–40 s), so the panel fetches it on open and on "Tải lại", never on a
- * timer. Like /api/pay/team this carries no auth of its own — it follows the
- * dashboard's posture.
+ * The list comes from `misa_overtime_snapshot`, which the morning MISA sync
+ * writes while its session is open — so opening the tab costs no browser login.
+ * `?live=1` ("Tải lại") logs into MISA here (~20–40 s) and replaces the copy;
+ * with no copy yet, the first read goes live too. Checks always run on read, so
+ * the evidence is current even when the list is from the morning. Like
+ * /api/pay/team this carries no auth of its own — it follows the dashboard's
+ * posture.
  */
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { readMisaOvertime } from "@/lib/misa-native";
 import { sbSelect, sbSelectAll, supabaseConfigured } from "@/lib/supabase-rest";
 import { staffCode } from "@/lib/display-names";
@@ -48,17 +51,24 @@ const vnHhmm = (ts: string) => {
 const inList = (xs: string[]) => `in.(${[...new Set(xs)].map(encodeURIComponent).join(",")})`;
 const nameKey = (s: string) => s.normalize("NFC").trim().toLowerCase().replace(/\s+/g, " ");
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   if (!supabaseConfigured()) return NextResponse.json({ error: "Supabase chưa cấu hình" }, { status: 503 });
-  let rows: MisaRow[];
-  try {
-    rows = await readMisaOvertime();
-  } catch (e) {
-    return NextResponse.json({ error: `Không đọc được MISA: ${e instanceof Error ? e.message : String(e)}` }, { status: 502 });
+  let rows: MisaRow[] | null = null;
+  let fetchedAt = new Date().toISOString();
+  if (req.nextUrl.searchParams.get("live") !== "1") {
+    const [snap] = await sbSelect<{ rows: MisaRow[]; fetched_at: string }>("misa_overtime_snapshot", "select=rows,fetched_at&id=eq.pending");
+    if (snap) { rows = snap.rows; fetchedAt = snap.fetched_at; }
+  }
+  if (!rows) {
+    try {
+      rows = await readMisaOvertime(); // also replaces the saved copy
+    } catch (e) {
+      return NextResponse.json({ error: `Không đọc được MISA: ${e instanceof Error ? e.message : String(e)}` }, { status: 502 });
+    }
   }
   const reqs = rows.map(toRequest).filter((r) => r.code && r.date);
   const today = vnDate();
-  if (!reqs.length) return NextResponse.json({ fetched_at: new Date().toISOString(), requests: [] });
+  if (!reqs.length) return NextResponse.json({ fetched_at: fetchedAt, requests: [] });
 
   // Accounts: the DC account by staff code, and the same person's PT accounts by name.
   const drivers = await sbSelectAll<{ driver_id: string; first_name: string | null; last_name: string | null }>(
@@ -123,5 +133,5 @@ export async function GET() {
     }
     return { ...r, verdict };
   });
-  return NextResponse.json({ fetched_at: new Date().toISOString(), requests });
+  return NextResponse.json({ fetched_at: fetchedAt, requests });
 }
