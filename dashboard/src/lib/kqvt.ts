@@ -686,14 +686,16 @@ export function openJobs(driverId: string, jobs: Job[], nowMinutes = vnMinutesSi
  * not-started pickup at ANOTHER client is within NEAR_PICKUP_KM by road of this one, and
  * who has fewer than MAX_OPEN_TASKS jobs. The nearest such pickup wins. Straight line
  * first, so only candidates already that close cost a (cached) road lookup.
+ * Only `allowed` drivers — the client's config on duty now (supervisor, 2026-11-17:
+ * Vũ Tiến Đạt and Nguyễn Minh Hiếu were given clients they are not configured for).
  */
-export async function nearCollector(e: KqvtEntry, jobs: Job[], now: number): Promise<{ driverId: string; name: string | undefined } | null> {
+export async function nearCollector(e: KqvtEntry, jobs: Job[], now: number, allowed: string[]): Promise<{ driverId: string; name: string | undefined } | null> {
   const at = e.client_at;
   if (!at) return null;
   const cands: { job: Job; lat: number; lon: number }[] = [];
   for (const j of jobs) {
     const id = j.delivery_driver_id;
-    if (!id || id === PROXY_DRIVER_ID || j.job_status_id === 7 || (j.labels ?? []).includes(PSC_DELIVERY_LABEL)) continue;
+    if (!id || !allowed.includes(id) || id === PROXY_DRIVER_ID || j.job_status_id === 7 || (j.labels ?? []).includes(PSC_DELIVERY_LABEL)) continue;
     const s = (j.stops ?? []).find((x) => x.stop_type_id === 1 && x.stop_status_id === 1 && x.customer_id !== e.client_id);
     if (s?.latitude == null || s.longitude == null) continue;
     if (haversineKm(at.lat, at.lon, s.latitude, s.longitude) > NEAR_PICKUP_KM) continue;
@@ -880,7 +882,9 @@ export async function kqvtCycle(
             const at = await clientPosition(e.client_id);
             if (at) { e.client_at = at; await savePending(e); }
           }
-          who = await nearCollector(e, jobsToday, now).catch(() => null);
+          const choices = resolveDriverChoices(config, e.client_id, "", leave, new Date(now));
+          const allowed = choices.ok ? choices.drivers.filter((d) => d.onDuty).map((d) => d.driverId) : [];
+          who = allowed.length ? await nearCollector(e, jobsToday, now, allowed).catch(() => null) : null;
           near = !!who;
         }
         // Release time to 2 minutes ahead first (Cartrack takes no past time): the

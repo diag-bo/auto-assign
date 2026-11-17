@@ -211,19 +211,23 @@ assert.equal(await isNear({ lat: 10.775, lon: 106.673 }, null), false);
     stops: [{ stop_type_id: 2, stop_status_id: 4, customer_id: "PSC", activity_completed_ts: "2026-11-13 09:30:00" }],
   }) as unknown as Job;
   // 0.0045° ≈ 0.5 km, 0.0072° ≈ 0.8 km, 0.02° ≈ 2.2 km.
+  const ALL = ["A", "B", "C", "D"];
   const jobs = [pickupNear(1, "A", 0.0072), atPscJob(2, "A"), pickupNear(3, "B", 0.0045), atPscJob(4, "B"), pickupNear(5, "C", 0.02), atPscJob(6, "C")];
-  assert.equal((await nearCollector(e, jobs, now))?.driverId, "B");
+  assert.equal((await nearCollector(e, jobs, now, ALL))?.driverId, "B");
   // B not at the PSC → A (0.8 km); nobody within 1 km → null.
-  assert.equal((await nearCollector(e, jobs.filter((j) => j.job_id !== 4), now))?.driverId, "A");
-  assert.equal(await nearCollector(e, [pickupNear(5, "C", 0.02), atPscJob(6, "C")], now), null);
+  assert.equal((await nearCollector(e, jobs.filter((j) => j.job_id !== 4), now, ALL))?.driverId, "A");
+  assert.equal(await nearCollector(e, [pickupNear(5, "C", 0.02), atPscJob(6, "C")], now, ALL), null);
   // B full (3 open jobs) → A.
   const full = [...jobs, pickupNear(7, "B", 0.5), pickupNear(8, "B", 0.5)];
   assert.equal(openJobs("B", full), 3);
-  assert.equal((await nearCollector(e, full, now))?.driverId, "A");
+  assert.equal((await nearCollector(e, full, now, ALL))?.driverId, "A");
   // The client's own pickup is not "near": that is smartCollector's.
-  assert.equal(await nearCollector(e, [{ ...pickupNear(9, "D", 0.001), stops: [{ stop_type_id: 1, stop_status_id: 1, customer_id: "X", latitude: at.lat, longitude: at.lon }] } as unknown as Job, atPscJob(10, "D")], now), null);
+  assert.equal(await nearCollector(e, [{ ...pickupNear(9, "D", 0.001), stops: [{ stop_type_id: 1, stop_status_id: 1, customer_id: "X", latitude: at.lat, longitude: at.lon }] } as unknown as Job, atPscJob(10, "D")], now, ALL), null);
   // No client position → nothing.
-  assert.equal(await nearCollector({ ...e, client_at: undefined }, jobs, now), null);
+  assert.equal(await nearCollector({ ...e, client_at: undefined }, jobs, now, ALL), null);
+  // Only the client's config drivers: B is not on it → A.
+  assert.equal((await nearCollector(e, jobs, now, ["A", "C"]))?.driverId, "A");
+  assert.equal(await nearCollector(e, jobs, now, []), null);
 }
 
 // Open jobs, counted as smart ranking does: a pickup whose window opens >60 min away
