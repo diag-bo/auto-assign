@@ -24,6 +24,7 @@ const URLS = {
   attendance: `${ORIGIN}/APIS/g1/TimeSheetAPI/api/Attendance/v2/datapaging`,
   timesheets: `${ORIGIN}/APIS/g2/TimeSheetAPI/api/TimeSheet/v2/datapaging`,
   timesheetDetail: `${ORIGIN}/APIS/g2/TimeSheetAPI/api/TimeSheetDetail/paging`,
+  overtime: `${ORIGIN}/APIS/g2/TimeSheetAPI/api/OverTime/v2/datapaging`,
 };
 
 const WRONG_CREDS_TEXT = "Tên đăng nhập hoặc mật khẩu không đúng";
@@ -396,5 +397,40 @@ export async function fetchTimesheetDetail(page, timeSheetId) {
     await page.waitForTimeout(300);
   }
   log(`timesheet ${timeSheetId}: ${all.length} employees`);
+  return all;
+}
+
+// ---------------------------------------------------------- overtime fetch ---
+// "Đăng ký làm thêm" as the approver's page lists it. CustomParam.Status is the
+// view: 1 = waiting for approval (every row comes back Status 1), 2 approved,
+// 3 rejected, 4 mid-approval, 0 = all. Each row carries MISA's own clock-ins for
+// the day (TimeAttendanceData, "07:55; 15:07") and the shift (WorkingShiftCode
+// "07301630"), which is what the dashboard checks the hours against.
+
+// The column list MISA's own page sends; like the attendance endpoint it is kept whole.
+const OVERTIME_COLUMNS =
+  "OverTimeID,EmployeeID,EmployeeCode,FullName,JobPositionName,ApprovalName,OrganizationUnitID,OrganizationUnitName,ApplyDate,BreakTimeFrom,BreakTimeTo,FromDate,ToDate,Reason,Status,WorkingShiftName,OverTimeInWorkingShiftName,Description,DataSourceID,ApprovalToID,Step,NextStep,IsProcess,ProcessApprovalOldID,StepOld,NextStepOld,IsApplyProcessNew,JobPositionID,JobTitleID,WorkingShiftID,OverTimeInWorkingShift,RelationShipNames,OvertimeType,OvertimeTypeName,TotalTime,EmployeeOverTimeNames,EmployeeOverTimeCodes,EmployeeOverTimeIDs,WorkingShiftCode,JobTitleName,ProcessApprovalOldValue,IsApply,WorkLocationName,ShowEmployeeOverTime,IsAttachedFile,TimeZone,IsMultipleDate,BreakTimeStart,BreakTimeEnd,RelationShipIDs,FromTime,ToTime,ProcessDetail,IsViolateDeadline,ViolateDeadlineType,ViolateDeadlineValue";
+const OVERTIME_PAGE_SIZE = 100;
+
+export async function fetchOvertime(page, status = 1) {
+  const all = [];
+  for (let pageIndex = 1; ; pageIndex++) {
+    const resp = await pageFetch(page, URLS.overtime, {
+      method: "POST",
+      body: {
+        PageSize: OVERTIME_PAGE_SIZE, PageIndex: pageIndex, Filter: null, CustomFilter: null, QuickSearch: null,
+        CustomParam: { OrganizationUnitID: null, Inactive: false, Status: status },
+        Sort: b64([{ selector: "FullName", desc: false }]), Columns: OVERTIME_COLUMNS,
+      },
+    });
+    if (resp.status !== 200 || !resp.data?.Success) {
+      throw new Error(`overtime page ${pageIndex} failed (HTTP ${resp.status}): ${resp.data?.UserMessage || resp.text?.slice(0, 200)}`);
+    }
+    const rows = Array.isArray(resp.data.Data) ? resp.data.Data : resp.data.Data?.PageData || [];
+    all.push(...rows);
+    if (rows.length < OVERTIME_PAGE_SIZE) break;
+    await page.waitForTimeout(300);
+  }
+  log(`overtime status ${status}: ${all.length} request(s)`);
   return all;
 }

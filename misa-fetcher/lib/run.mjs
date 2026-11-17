@@ -1,7 +1,7 @@
 /** Shared MISA pipeline for CLI and Vercel. Browser/OTP runtime is supplied by the caller. */
 import fs from "node:fs";
 import path from "node:path";
-import { createSession, ensureLoggedIn, fetchAllShifts, fetchAllAttendance, fetchTimesheetList, fetchTimesheetDetail } from "./misa.mjs";
+import { createSession, ensureLoggedIn, fetchOvertime, fetchAllShifts, fetchAllAttendance, fetchTimesheetList, fetchTimesheetDetail } from "./misa.mjs";
 import { monthRange, buildLeaveMap, parseShifts, pickTimesheets, parseTimesheetShifts } from "./parse.mjs";
 import { pushSupabase } from "./sinks.mjs";
 import {
@@ -301,3 +301,17 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
   }
 }
 
+
+/** Log in and read the overtime requests waiting for approval. Read only. */
+export async function readPendingOvertime({ creds, chromium, launchOptions, statePath } = {}) {
+  if (!creds?.username || !creds.password || !creds.totpSecret) {
+    throw new Error("MISA_USERNAME / MISA_PASSWORD / MISA_TOTP_SECRET must be set");
+  }
+  const { browser, context, page } = await createSession({ chromium, launchOptions, statePath });
+  try {
+    await ensureLoggedIn(page, context, creds, monthRange(), statePath);
+    return await fetchOvertime(page, 1);
+  } finally {
+    await browser.close();
+  }
+}

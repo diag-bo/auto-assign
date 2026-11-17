@@ -210,7 +210,7 @@ export interface LeaveOnDate {
  * Note this is date-only coverage: the engine additionally gates a windowed
  * leave on the *current* time; the panel shows the day's schedule regardless.
  */
-function coverageOnDate(
+export function coverageOnDate(
   e: LeaveEntry,
   date: string,
 ): { covers: boolean; timeLabel: string | null } {

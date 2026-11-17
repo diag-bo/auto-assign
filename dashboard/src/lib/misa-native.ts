@@ -7,7 +7,7 @@ import serverChromium from "@sparticuz/chromium-min";
 const CHROMIUM_PACK = "https://github.com/Sparticuz/chromium/releases/download/v153.0.0/chromium-v153.0.0-pack.x64.tar";
 import { chromium } from "playwright-core";
 import { authenticator } from "otplib";
-import { runMisaSync } from "../../../misa-fetcher/lib/run.mjs";
+import { runMisaSync, readPendingOvertime } from "../../../misa-fetcher/lib/run.mjs";
 import { findLeaveConflict, loadLeaveEntriesStrict } from "./leave-config";
 
 type LeaveSub = { driver_id: string; driver_name: string; loai_nghi: string; ngay_bat_dau: string;
@@ -27,11 +27,21 @@ async function leaveOnFile() {
   }, entries, invalid);
 }
 
-const run = async (months: string[]) => runMisaSync({month:months[0],flags:[`--months=${months.length}`],chromium,
-  writeDump:false,leaveOnFile,statePath:"/tmp/misa-session.json",
-  launchOptions:{args:serverChromium.args,executablePath:await serverChromium.executablePath(CHROMIUM_PACK)},
+// MISA_CHROMIUM_PATH: a local Chrome for `npm run dev` on Windows/macOS, where the
+// Linux server build cannot run. Unset on Vercel.
+const browserOptions = async () => ({chromium,statePath:"/tmp/misa-session.json",
+  launchOptions:process.env.MISA_CHROMIUM_PATH ? {args:[],executablePath:process.env.MISA_CHROMIUM_PATH}
+    : {args:serverChromium.args,executablePath:await serverChromium.executablePath(CHROMIUM_PACK)},
   creds:{username:process.env.MISA_USERNAME,password:process.env.MISA_PASSWORD,totpSecret:process.env.MISA_TOTP_SECRET,
     generateTotp:()=>authenticator.generate(process.env.MISA_TOTP_SECRET!)}});
+
+const run = async (months: string[]) => runMisaSync({...await browserOptions(),month:months[0],flags:[`--months=${months.length}`],
+  writeDump:false,leaveOnFile});
+
+/** Overtime requests waiting for approval in MISA (read only). */
+export async function readMisaOvertime() {
+  return readPendingOvertime(await browserOptions());
+}
 
 /** Every month in ONE browser. One launch per month, each its own invocation, kept
  * landing on the same warm instance seconds after the previous Chromium closed, and

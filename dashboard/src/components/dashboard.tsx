@@ -24,6 +24,7 @@ import { SundayRosterPanel } from "./sunday-roster-panel";
 import { SalesTool } from "./sales-tool";
 import { DriverListPanel } from "./driver-list-panel";
 import { PayTeamPanel } from "./pay-team-panel";
+import { OvertimeReviewPanel } from "./overtime-review-panel";
 import { LocationsPanel, TplMappingsPanel } from "./locations-panel";
 import { ClientBotsPanel } from "./client-bots-panel";
 import { toast } from "sonner";
@@ -38,7 +39,7 @@ import type { LeaveSuppression } from "@/lib/leave-suppression";
 import type { LabcenterMetadataReport } from "@/lib/master-sync";
 
 type Env = "prod" | "uat";
-type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "pay" | "drivers" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
+type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "pay" | "overtime" | "drivers" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
 
 export function Dashboard() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -693,6 +694,7 @@ export function Dashboard() {
 
   const setupActive = ["config", "schedule", "shifts", "drivers", "sunday", "locations", "tpl", "bots", "newcustomer"].includes(rightTab);
   const operationsActive = rightTab === "distance" || rightTab === "tat";
+  const payActive = rightTab === "pay" || rightTab === "overtime";
 
   /** Main menu, on the dark header bar. Icons only from 2xl: at 1280–1536px
    *  they are what pushed the bar onto a second line. */
@@ -760,8 +762,8 @@ export function Dashboard() {
             <button aria-pressed={operationsActive} onClick={() => { if (!operationsActive) setRightTab("distance"); }} className={navBtn(operationsActive)}>
               <Gauge aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Khoảng cách &amp; Hiệu suất
             </button>
-            <button aria-pressed={rightTab === "pay"} onClick={() => setRightTab("pay")} className={navBtn(rightTab === "pay")}>
-              <Banknote aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Lương PT
+            <button aria-pressed={payActive} onClick={() => { if (!payActive) setRightTab("pay"); }} className={navBtn(payActive)}>
+              <Banknote aria-hidden="true" className="size-4 shrink-0" strokeWidth={1.75} /> Lương
             </button>
         </nav>
         <div className="flex items-center gap-3 sm:gap-4 ml-auto">
@@ -856,6 +858,10 @@ export function Dashboard() {
           {operationsActive && <nav aria-label="Khoảng cách và Hiệu suất" className="flex flex-wrap items-center gap-1 shrink-0">
             <button aria-pressed={rightTab === "distance"} onClick={() => setRightTab("distance")} className={tabBtn(rightTab === "distance")}>Khoảng cách</button>
             <button aria-pressed={rightTab === "tat"} onClick={() => setRightTab("tat")} className={tabBtn(rightTab === "tat")}>Hiệu suất</button>
+          </nav>}
+          {payActive && <nav aria-label="Lương" className="flex flex-wrap items-center gap-1 shrink-0">
+            <button aria-pressed={rightTab === "pay"} onClick={() => setRightTab("pay")} className={tabBtn(rightTab === "pay")}>Lương PT</button>
+            <button aria-pressed={rightTab === "overtime"} onClick={() => setRightTab("overtime")} className={tabBtn(rightTab === "overtime")}>Tăng ca</button>
           </nav>}
           {syncFailure && (
             <p role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-900 shrink-0">
@@ -1022,6 +1028,8 @@ export function Dashboard() {
               <div className="h-[72vh] lg:h-full">
                 <PayTeamPanel />
               </div>
+            ) : rightTab === "overtime" ? (
+              <div className="h-[72vh] lg:h-full"><OvertimeReviewPanel /></div>
             ) : rightTab === "drivers" ? (
               <div className="h-[72vh] lg:h-full"><DriverListPanel /></div>
             ) : rightTab === "newcustomer" ? (
