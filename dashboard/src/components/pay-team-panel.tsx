@@ -24,6 +24,7 @@ import { Loader2, AlertCircle, Check, CheckCircle2, Clock, Download, ChevronLeft
 import * as XLSX from "xlsx";
 import { parsePayrollSheet } from "@/lib/pay-shifts";
 import { foldName } from "@/lib/driver-cell";
+import { runningPayMonth } from "@/lib/pay-period";
 import { DriverName } from "./driver-name";
 import { PayCorrectionsPanel } from "./pay-corrections-panel";
 import { PayNoShiftPanel, type NoShiftDay } from "./pay-no-shift-panel";
@@ -122,10 +123,14 @@ function shiftMonth(m: string, delta: number): string {
   return d.toISOString().slice(0, 7);
 }
 
+const vnToday = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+
+/** Opens on the period being paid — the one that closed on the 14th, until
+ *  payroll runs on the 25th — and otherwise on the running one. */
 function defaultMonth(): string {
-  const vnNow = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" })
-    .format(new Date()).slice(0, 7);
-  return vnNow;
+  const today = vnToday();
+  const day = Number(today.slice(8, 10));
+  return day >= 15 && day <= 25 ? today.slice(0, 7) : runningPayMonth(today);
 }
 
 /** One day of one driver, as /api/pay/team?driver= returns it. */
@@ -504,7 +509,7 @@ export function PayTeamPanel() {
           </span>
           <button
             onClick={() => setMonth(shiftMonth(month, 1))}
-            disabled={month >= defaultMonth()}
+            disabled={month >= runningPayMonth(vnToday())}
             className="size-11 sm:size-9 grid place-items-center rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-40"
             title="Tháng sau"
           >

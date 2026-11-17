@@ -867,6 +867,32 @@ export default function ChamCongPage() {
   // tab is worth showing, and an unauthenticated visitor is not shown it at all
   // rather than being shown a tab that would refuse them.
   const isPartTime = employmentOf(nvSession?.driver_name) === "part-time";
+  // A DC login sees the same person's PT pay when they have a PT account too —
+  // people sign in on either. Only the server can tell (?probe=1); the answer is
+  // remembered for a day so opening the app does not cost a call each time.
+  const ftId = nvSession && employmentOf(nvSession.driver_name) === "full-time" ? nvSession.driver_name : null;
+  const [ptPayFor, setPtPayFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!ftId) return;
+    const key = `cc_pt_pay:${ftId}`;
+    try {
+      const c = JSON.parse(localStorage.getItem(key) ?? "null") as { ok: boolean; at: number } | null;
+      if (c && Date.now() - c.at < 86_400_000) { if (c.ok) setPtPayFor(ftId); return; }
+    } catch { /* no cache */ }
+    let live = true;
+    fetch("/api/pay/me?probe=1")
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; not_part_time?: boolean }) => {
+        if (!live) return;
+        if (d.ok) setPtPayFor(ftId);
+        if (d.ok || d.not_part_time) {
+          try { localStorage.setItem(key, JSON.stringify({ ok: !!d.ok, at: Date.now() })); } catch { /* ignore */ }
+        }
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [ftId]);
+  const showPay = isPartTime || (!!ftId && ptPayFor === ftId);
 
   // Sunday roster: load when its tab is first opened, mirroring nhan-viec below. Once per
   // page life is enough — ops edits the sheet weekly, not while a driver is looking at it,
@@ -1607,10 +1633,10 @@ export default function ChamCongPage() {
             <Truck size={14} />
             Nhận Việc
           </button>
-          {/* Part-time only, and only once logged in: before that we do not know
-              which kind of account this is, and a tab that would refuse you is
-              worse than no tab. */}
-          {nvLoggedIn && isPartTime && (
+          {/* Part-time pay only, and only once logged in: before that we do not
+              know which kind of account this is, and a tab that would refuse you
+              is worse than no tab. A DC login with a PT account gets it too. */}
+          {nvLoggedIn && showPay && (
             <button
               onClick={() => setTab("thu-nhap")}
               className={`flex-1 min-w-[54px] shrink-0 py-2.5 text-[11px] font-semibold transition-colors flex flex-col items-center justify-center gap-0.5 whitespace-nowrap ${

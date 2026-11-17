@@ -5,7 +5,7 @@ const source = fs.readFileSync(require.resolve('../src/lib/pay-period.ts'), 'utf
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } });
 const mod = { exports: {} };
 new Function('exports', compiled.outputText)(mod.exports);
-const { payrollPeriod } = mod.exports;
+const { payrollPeriod, runningPayMonth } = mod.exports;
 
 assert.deepEqual(payrollPeriod('2026-09'), { from: '2026-08-15', to: '2026-09-14' });
 assert.deepEqual(payrollPeriod('2027-01'), { from: '2026-12-15', to: '2027-01-14' });
@@ -18,5 +18,13 @@ for (const [month, dates] of [
 ]) {
   const { from, to } = payrollPeriod(month);
   assert.deepEqual(dates.filter(date => date >= from && date <= to), dates.slice(1, -1));
+}
+// The running period: from the 15th it is next month's, across a year end too.
+assert.equal(runningPayMonth('2026-11-14'), '2026-11');
+assert.equal(runningPayMonth('2026-11-15'), '2026-12');
+assert.equal(runningPayMonth('2026-12-17'), '2027-01');
+for (const d of ['2026-11-01', '2026-11-14', '2026-11-15', '2026-11-30', '2026-12-31']) {
+  const { from, to } = payrollPeriod(runningPayMonth(d));
+  assert.ok(d >= from && d <= to, d);
 }
 console.log('Payroll periods: September, year rollover, leap year and inclusive boundaries passed.');

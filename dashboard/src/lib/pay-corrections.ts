@@ -11,7 +11,7 @@
  *   system_error — "Lỗi hệ thống". A screenshot is REQUIRED.
  * A supervisor's direct correction carries reason 'supervisor'.
  */
-import { payrollPeriod } from "./pay-period";
+import { payrollPeriod, runningPayMonth } from "./pay-period";
 import { addDays } from "./time";
 
 export type DriverReason = "forgot_tap" | "system_error";
@@ -38,9 +38,7 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 export function openRange(today: string): { from: string; to: string } {
   const day = Number(today.slice(8, 10));
   const thisMonth = today.slice(0, 7);
-  const next = new Date(`${thisMonth}-01T00:00:00Z`);
-  next.setUTCMonth(next.getUTCMonth() + 1);
-  const running = day <= 14 ? thisMonth : next.toISOString().slice(0, 7);
+  const running = runningPayMonth(today);
   const from = day >= 15 && day <= 25 ? payrollPeriod(thisMonth).from : payrollPeriod(running).from;
   return { from, to: addDays(today, -1) };
 }

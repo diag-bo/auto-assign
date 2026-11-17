@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySession, NV_COOKIE } from "@/lib/driver-session";
 import { sbInsert, sbPatch, supabaseConfigured } from "@/lib/supabase-rest";
-import { employmentOf } from "@/lib/driver-label";
+import { payAccountFor } from "@/lib/pay-days";
 import { checkTimes, checkProof, type CorrectionInput } from "@/lib/pay-corrections";
 import { uploadToCartrack, proofUploadConfigured, type UploadFile } from "@/lib/cartrack-files";
 import { vnDate } from "@/lib/time";
@@ -24,15 +24,17 @@ export const maxDuration = 60;
 export const preferredRegion = "sin1";
 
 export async function POST(req: NextRequest) {
-  const session = verifySession(req.cookies.get(NV_COOKIE)?.value);
-  if (!session) {
+  const signedIn = verifySession(req.cookies.get(NV_COOKIE)?.value);
+  if (!signedIn) {
     return NextResponse.json({ ok: false, expired: true, error: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại." }, { status: 401 });
-  }
-  if (employmentOf(session.driver_name) !== "part-time") {
-    return NextResponse.json({ ok: false, error: "Chỉ áp dụng cho tài khoản bán thời gian (PT)." }, { status: 403 });
   }
   if (!supabaseConfigured()) {
     return NextResponse.json({ ok: false, error: "Hệ thống lưu trữ chưa được cấu hình." }, { status: 503 });
+  }
+  // A DC login files against the same person's PT account, as /api/pay/me shows it.
+  const session = await payAccountFor(signedIn);
+  if (!session) {
+    return NextResponse.json({ ok: false, error: "Chỉ áp dụng cho tài khoản bán thời gian (PT)." }, { status: 403 });
   }
 
   const body = await req.json().catch(() => null) as (Partial<CorrectionInput> & { reason?: unknown; files?: unknown }) | null;

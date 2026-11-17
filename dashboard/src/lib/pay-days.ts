@@ -55,6 +55,36 @@ interface LeaveRow {
  *  repeated on every week's roster; it is not a Sunday shift. */
 export const isWeekdayRoleLine = (area: string) => /\(\s*Thứ\s/i.test(area) && !/\bCN\b/.test(area);
 
+type RosterRow = { driver_id: string; first_name: string | null; last_name: string | null };
+type Account = { driver_id: string; driver_name: string };
+
+/** PT account → the same person's full-time (DC) account: one of each under one
+ *  personal name, or none (Vietnamese names repeat; never guess between two). */
+function twinPairs(roster: RosterRow[]): [Account, Account][] {
+  const byPerson = new Map<string, { pt: Account[]; ft: Account[] }>();
+  for (const r of roster) {
+    const full = `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim();
+    const kind = employmentOf(full), key = normalizeDriverName(full);
+    if (!key || !kind) continue;
+    const g = byPerson.get(key) ?? { pt: [], ft: [] };
+    (kind === "part-time" ? g.pt : g.ft).push({ driver_id: r.driver_id, driver_name: full });
+    byPerson.set(key, g);
+  }
+  return [...byPerson.values()].filter((g) => g.pt.length === 1 && g.ft.length === 1).map((g) => [g.pt[0], g.ft[0]]);
+}
+
+/** The account whose part-time pay a signed-in driver sees: their own when it is
+ *  PT, the same person's PT account when they signed in on their DC one, else
+ *  null. The id comes from the caller's session, never from the request. */
+export async function payAccountFor(session: Account): Promise<Account | null> {
+  const kind = employmentOf(session.driver_name);
+  if (kind === "part-time") return session;
+  if (kind !== "full-time") return null;
+  const roster = await sbSelectAll<RosterRow>(
+    "master_drivers", "select=driver_id,first_name,last_name&is_active=eq.true", "driver_id.asc");
+  return twinPairs(roster).find(([, ft]) => ft.driver_id === session.driver_id)?.[0] ?? null;
+}
+
 export async function loadPayDayInputs(from: string, to: string, driverId?: string) {
   const who = driverId ? `&driver_id=eq.${driverId}` : "&driver_id=not.is.null";
   const [corrections, payrollAny, sunday, leaves, roster] = await Promise.all([
@@ -80,24 +110,12 @@ export async function loadPayDayInputs(from: string, to: string, driverId?: stri
         (driverId ? `&master_leave_substitutes=cs.${encodeURIComponent(JSON.stringify([{ driver_id: driverId }]))}` : ""),
       "id.asc",
     ),
-    sbSelectAll<{ driver_id: string; first_name: string | null; last_name: string | null }>(
+    sbSelectAll<RosterRow>(
       "master_drivers", "select=driver_id,first_name,last_name&is_active=eq.true", "driver_id.asc"),
   ]);
   const payrollImported = payrollAny.length > 0;
 
-  // PT account → the same person's full-time (DC) account: one of each under one
-  // personal name, or none (Vietnamese names repeat; never guess between two).
-  const byPerson = new Map<string, { pt: string[]; ft: string[] }>();
-  for (const r of roster) {
-    const full = `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim();
-    const kind = employmentOf(full), key = normalizeDriverName(full);
-    if (!key || !kind) continue;
-    const g = byPerson.get(key) ?? { pt: [], ft: [] };
-    (kind === "part-time" ? g.pt : g.ft).push(r.driver_id);
-    byPerson.set(key, g);
-  }
-  const ftTwin = new Map<string, string>();
-  for (const g of byPerson.values()) if (g.pt.length === 1 && g.ft.length === 1) ftTwin.set(g.pt[0], g.ft[0]);
+  const ftTwin = new Map([...twinPairs(roster)].map(([pt, ft]) => [pt.driver_id, ft.driver_id]));
 
   // A whole-day cover takes the ABSENT driver's shift, so one driver's view also
   // needs the shifts of whoever they covered.

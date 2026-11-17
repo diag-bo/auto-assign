@@ -9,9 +9,11 @@
  * PART-TIME ONLY. The rates are the part-time contract; a full-time account's
  * figure would be a wrong payslip, and a wrong payslip gets believed. The gate
  * reads the staff code on the authenticated name (employmentOf: DC… full-time,
- * PT… part-time) and answers 403 for anything that is not PT, INCLUDING an
- * account whose label carries no code at all — this is money, so "cannot tell"
- * has to mean no.
+ * PT… part-time). A DC login sees the SAME PERSON's PT account (payAccountFor:
+ * one of each under one name, never a guess) — people sign in on either. Anything
+ * else answers 403, INCLUDING an account whose label carries no code at all —
+ * this is money, so "cannot tell" has to mean no. ?probe=1 answers only whether
+ * there is a PT account to show, so the app knows whether to offer the tab.
  *
  * TWO MODES
  *   ?month=YYYY-MM → the month: totals, plus one line per worked day.
@@ -29,15 +31,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifySession, NV_COOKIE } from "@/lib/driver-session";
 import { sbSelectAll, supabaseConfigured } from "@/lib/supabase-rest";
 import { masterDriverNames } from "@/lib/master-store";
-import { employmentOf } from "@/lib/driver-label";
 import {
   paidDay, hoursPayFor, kmPayFor, punchAt,
   RATE_PER_HOUR_VND, RATE_PER_KM_VND, BO_RATE_PER_HOUR_VND,
   type PayPunch, type PayJob, type DayFacts,
 } from "@/lib/pay";
-import { payrollPeriod } from "@/lib/pay-period";
+import { payrollPeriod, runningPayMonth } from "@/lib/pay-period";
 import { staffCode, placeName } from "@/lib/display-names";
-import { loadPayDayInputs, dayKey, type CorrectionRow } from "@/lib/pay-days";
+import { loadPayDayInputs, dayKey, payAccountFor, type CorrectionRow } from "@/lib/pay-days";
 import { vnDate, addDays } from "@/lib/time";
 
 export const runtime = "nodejs";
@@ -87,7 +88,6 @@ const num = (v: number | string | null | undefined): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const monthOf = (date: string) => date.slice(0, 7);
 function addMonths(m: string, n: number): string {
   const d = new Date(`${m}-01T00:00:00Z`);
   d.setUTCMonth(d.getUTCMonth() + n);
@@ -127,22 +127,11 @@ function dayLine(code: string, facts: DayFacts, km: number, jobs: number, punche
 }
 
 export async function GET(req: NextRequest) {
-  const session = verifySession(req.cookies.get(NV_COOKIE)?.value);
-  if (!session) {
+  const signedIn = verifySession(req.cookies.get(NV_COOKIE)?.value);
+  if (!signedIn) {
     return NextResponse.json(
       { ok: false, expired: true, error: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại." },
       { status: 401 },
-    );
-  }
-
-  if (employmentOf(session.driver_name) !== "part-time") {
-    return NextResponse.json(
-      {
-        ok: false,
-        not_part_time: true,
-        error: "Bảng thu nhập chỉ áp dụng cho tài khoản bán thời gian (PT).",
-      },
-      { status: 403 },
     );
   }
 
@@ -153,7 +142,20 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const session = await payAccountFor(signedIn);
+  if (!session) {
+    return NextResponse.json(
+      {
+        ok: false,
+        not_part_time: true,
+        error: "Bảng thu nhập chỉ áp dụng cho tài khoản bán thời gian (PT).",
+      },
+      { status: 403 },
+    );
+  }
+
   const sp = req.nextUrl.searchParams;
+  if (sp.get("probe") === "1") return NextResponse.json({ ok: true, driver_name: session.driver_name });
   const driverId = session.driver_id;
   const code = staffCode(session.driver_name);
   const latest = latestDayFor(vnDate());
@@ -244,7 +246,10 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Month mode ────────────────────────────────────────────────────────────
-  const askedMonth = sp.get("month") ?? monthOf(vnDate());
+  // No month asked → the period the driver is working in now, which from the
+  // 15th is next month's: on 17/11 that is Tháng 12 (15/11–14/12).
+  const running = runningPayMonth(vnDate());
+  const askedMonth = sp.get("month") ?? running;
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(askedMonth)) {
     return NextResponse.json({ ok: false, error: "Tháng không hợp lệ." }, { status: 400 });
   }
@@ -328,7 +333,7 @@ export async function GET(req: NextRequest) {
       rates,
       // The arrows' bounds, so the client never has to know when data began.
       prev_month: addMonths(askedMonth, -1),
-      next_month: askedMonth < monthOf(vnDate()) ? addMonths(askedMonth, 1) : null,
+      next_month: askedMonth < running ? addMonths(askedMonth, 1) : null,
       summary: {
         days: days.filter((d) => d.jobs > 0 || d.worked_mins > 0).length,
         jobs: days.reduce((s, d) => s + d.jobs, 0),
