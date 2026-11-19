@@ -146,7 +146,7 @@ export function ParkingFeeTab({ onExpired }: { onExpired: () => void }) {
       )}
 
       {lines.map((l, i) => (
-        <div key={l.r.key} className={`border rounded-xl p-3 space-y-2 ${l.problem ? "border-red-300 bg-red-50/40" : "border-gray-200"}`}>
+        <div key={l.r.key} className={`border rounded-xl p-3 space-y-2 ${l.problem ? "border-red-200 bg-red-50" : "border-gray-200"}`}>
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-500">Điểm {i + 1}</span>
             {rows.length > 1 && (
@@ -172,9 +172,6 @@ export function ParkingFeeTab({ onExpired }: { onExpired: () => void }) {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
           </div>
-          {l.problem && (
-            <p className="flex gap-1.5 text-xs text-red-700"><AlertCircle size={14} className="shrink-0 mt-0.5" />{l.problem}</p>
-          )}
         </div>
       ))}
 
@@ -187,7 +184,9 @@ export function ParkingFeeTab({ onExpired }: { onExpired: () => void }) {
         <span>Tổng cần hoàn trả</span><span>{vnd(total)}</span>
       </div>
 
-      <p className="text-[11px] text-gray-400">Chỉ khai các lần gửi xe tính đến hôm qua.</p>
+      {invalid && (
+        <p className="flex items-center gap-1.5 text-xs text-red-700"><AlertCircle size={14} className="shrink-0" />Yêu cầu không hợp lệ</p>
+      )}
 
       <button onClick={submit} disabled={!complete || invalid || busy}
         className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors">
