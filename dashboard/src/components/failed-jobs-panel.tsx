@@ -257,7 +257,7 @@ function FailedRow({
   const [resolved, setResolved] = useState(false);
   const [resolving, setResolving] = useState(false);
   const resolveKqvt = async () => {
-    if (!window.confirm(`Đánh dấu KQ/VT ${job.job_id < 0 ? job.customer : `của job ${job.job_id}`} là đã xử lý?\nCảnh báo sẽ không hiện lại và hệ thống ngừng tự giao kèm. Job trên Cartrack giữ nguyên.`)) return;
+    if (!window.confirm(`Đánh dấu KQ/VT ${job.job_id < 0 ? job.customer : `của job ${job.job_id}`} là đã xử lý?\nCảnh báo sẽ không hiện lại và hệ thống ngừng tự giao kèm.${job.job_id > 0 ? " Job trên Cartrack sẽ bị huỷ (trừ khi tài xế đã bắt đầu)." : ""}`)) return;
     setResolving(true);
     try {
       const res = await fetch("/api/kqvt/resolve", {
@@ -268,7 +268,8 @@ function FailedRow({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Không lưu được");
       setResolved(true);
-      toast.success(`Đã xử lý KQ/VT ${job.job_id < 0 ? job.customer : `job ${job.job_id}`}`);
+      toast.success(`Đã xử lý KQ/VT ${job.job_id < 0 ? job.customer : `job ${job.job_id}`}${
+        data.cartrack === "cancelled" ? " — đã huỷ job trên Cartrack" : data.cartrack === "started" ? " — tài xế đã bắt đầu, job trên Cartrack giữ nguyên" : ""}`);
     } catch (e) {
       toast.error(`Chưa lưu được: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
