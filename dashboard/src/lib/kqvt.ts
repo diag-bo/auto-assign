@@ -477,7 +477,15 @@ export async function convertToDirect(jobId: number, env: Env): Promise<{ ok: tr
   if ([3, 5, 7].includes(job.job_status_id ?? 0)) return { ok: false, status: 409, error: "Job đã kết thúc." };
   if ((job.stops ?? []).length !== 1 || job.stops![0].stop_status_id !== 1) return { ok: false, status: 409, error: "Chỉ đổi được job một điểm dừng chưa bắt đầu." };
 
-  const driver = job.delivery_driver_id && job.delivery_driver_id !== PROXY_DRIVER_ID ? job.delivery_driver_id : null;
+  // Kept with its driver; a parked one gets the client's driver as a near booking does —
+  // the engine never assigns a KQ/VT job, so a driverless one sat unassigned (34536576).
+  let driver = job.delivery_driver_id && job.delivery_driver_id !== PROXY_DRIVER_ID ? job.delivery_driver_id : null;
+  if (!driver) {
+    const [{ loadConfig }, { loadLeaveEntries }] = await Promise.all([import("./config"), import("./leave-config")]);
+    const [config, leave] = await Promise.all([loadConfig().catch(() => null), loadLeaveEntries().catch(() => null)]);
+    const route = PSC_ROUTES.find((r) => r.pickup === e.psc);
+    if (config && leave && route) driver = (await pickCollector(config, leave, e.client_id, route, env, true).catch(() => null))?.driverId ?? null;
+  }
   const res = await createCollectJob(e, "", driver ? { driverId: driver } : null, env, true);
   if (!res.jobId) return { ok: false, status: 502, error: `Cartrack không tạo được chuyến mới (${res.status}).` };
   if (!(await cancelJob(jobId, jobVnDate(job), env).catch(() => false))) {
