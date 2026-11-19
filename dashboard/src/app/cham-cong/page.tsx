@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
-import { Calendar, Clock, ClipboardCheck, FileText, NotepadText, CalendarDays, Search, Truck, MapPin, ArrowLeftRight, CheckCircle2, LogOut, RefreshCw, AlertCircle, LogIn, Loader2, ChevronRight, ChevronLeft, Wallet } from "lucide-react";
+import { Calendar, Clock, ClipboardCheck, FileText, NotepadText, CalendarDays, Search, Truck, MapPin, ArrowLeftRight, CheckCircle2, LogOut, RefreshCw, AlertCircle, LogIn, Loader2, ChevronRight, ChevronLeft, Wallet, ParkingSquare } from "lucide-react";
 import { DIAG_LOCATIONS } from "@/lib/diag-locations";
 import { pscAddresses } from "@/lib/sunday-roster-post";
 import { driverDisplayName, placeName } from "@/lib/display-names";
 import { employmentOf } from "@/lib/driver-label";
 import { CorrectionForm, CorrectionChip } from "@/components/correction-form";
+import { ParkingFeeTab } from "@/components/parking-fee-tab";
 
 interface Driver {
   driver_id: string;
@@ -69,7 +70,7 @@ interface ShiftState {
 
 type ActionType = "check-in" | "check-out";
 type Status = "idle" | "loading" | "success" | "error";
-type Tab = "cham-cong" | "nghi-phep" | "lich-cn" | "nhan-viec" | "hieu-suat" | "thu-nhap";
+type Tab = "cham-cong" | "nghi-phep" | "lich-cn" | "nhan-viec" | "hieu-suat" | "thu-nhap" | "gui-xe";
 type LeaveType = "" | "nguyen_buoi" | "nua_buoi" | "nghi_viec";
 
 // ── Hiệu Suất (driver TAT report) ───────────────────────────────────────────
@@ -1649,6 +1650,19 @@ export default function ChamCongPage() {
               Thu Nhập
             </button>
           )}
+          {nvLoggedIn && (
+            <button
+              onClick={() => setTab("gui-xe")}
+              className={`flex-1 min-w-[54px] shrink-0 py-2.5 text-[11px] font-semibold transition-colors flex flex-col items-center justify-center gap-0.5 whitespace-nowrap ${
+                tab === "gui-xe"
+                  ? "text-blue-600 border-b-2 border-blue-600 bg-blue-50/40"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              <ParkingSquare size={14} />
+              Gửi Xe
+            </button>
+          )}
         </div>
 
         <div className="p-6 space-y-5">
@@ -1658,7 +1672,7 @@ export default function ChamCongPage() {
                  earnings tabs take their driver from the authenticated session
                  instead — on the earnings tab a picker would be worse than
                  useless, since it would suggest you can look up someone's pay) ── */}
-          {tab !== "lich-cn" && tab !== "nhan-viec" && tab !== "hieu-suat" && tab !== "thu-nhap" && (
+          {tab !== "lich-cn" && tab !== "nhan-viec" && tab !== "hieu-suat" && tab !== "thu-nhap" && tab !== "gui-xe" && (
           <div className="space-y-1 relative">
             <label className="text-sm font-medium text-gray-700">
               Nhân Viên Giao Nhận
@@ -2498,6 +2512,10 @@ export default function ChamCongPage() {
               One number leads: what the month comes to. Everything under it is
               the working, in the order a driver would check it — the two rates,
               then the days that produced them, then a day's own jobs. */}
+          {tab === "gui-xe" && (nvLoggedIn
+            ? <ParkingFeeTab onExpired={nvHandleExpired} />
+            : <p className="text-sm text-gray-500">Đăng nhập ở tab Nhận Việc để khai tiền gửi xe.</p>)}
+
           {tab === "thu-nhap" && (
             <>
               {!nvLoggedIn ? (

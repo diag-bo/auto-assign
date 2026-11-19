@@ -85,6 +85,16 @@ export async function payAccountFor(session: Account): Promise<Account | null> {
   return twinPairs(roster).find(([, ft]) => ft.driver_id === session.driver_id)?.[0] ?? null;
 }
 
+/** One person's accounts, for things filed per PERSON (tiền gửi xe): `owner` is
+ *  the full-time account when they hold both (supervisor, 2026-11-19), and `ids`
+ *  is every account whose trips are theirs. No unambiguous twin → just the session. */
+export async function personAccounts(session: Account): Promise<{ owner: Account; ids: string[] }> {
+  const roster = await sbSelectAll<RosterRow>(
+    "master_drivers", "select=driver_id,first_name,last_name&is_active=eq.true", "driver_id.asc");
+  const pair = twinPairs(roster).find(([pt, ft]) => pt.driver_id === session.driver_id || ft.driver_id === session.driver_id);
+  return pair ? { owner: pair[1], ids: [pair[1].driver_id, pair[0].driver_id] } : { owner: session, ids: [session.driver_id] };
+}
+
 export async function loadPayDayInputs(from: string, to: string, driverId?: string) {
   const who = driverId ? `&driver_id=eq.${driverId}` : "&driver_id=not.is.null";
   const [corrections, payrollAny, sunday, leaves, roster] = await Promise.all([
