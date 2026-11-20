@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DeliveryBooking } from "@/app/qr/[code]/delivery-booking";
 import { LAB_CUSTOMER_ID } from "@/lib/job-filters";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
+import { codeLabel } from "@/lib/place-label";
 
 type Prediction = {
   place_id: string;
@@ -1068,7 +1069,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
                                 edLocationId === l.id ? "bg-blue-50" : "hover:bg-slate-50"
                               }`}
                             >
-                              <p className="text-sm font-medium text-slate-800 break-words">{l.name}</p>
+                              <p className="text-sm font-medium text-slate-800 break-words">{codeLabel(l.name)}</p>
                               <p className="text-xs text-slate-500 mt-0.5">
                                 SĐT: <span className="font-semibold text-slate-700">{l.phone || "(trống)"}</span>
                               </p>
