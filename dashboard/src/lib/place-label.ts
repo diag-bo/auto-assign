@@ -11,6 +11,16 @@ export function placeLabel(name: string): string {
   return displayClientName(placeCore(name));
 }
 
+/** "{code} - {name}": the client row with its old district and street abbreviation
+ *  dropped but the account code kept — /sales, where reps know clients by code. "BRA -
+ *  D003" → "D003"; anything else is left as it is. */
+export function codeLabel(name: string): string {
+  const raw = (name ?? "").trim();
+  const parts = raw.split(" - ");
+  if (parts.length >= 2 && /^BRA$/i.test(parts[0])) return parts.slice(1).join(" - ");
+  return parts.length >= 4 ? `${parts[0]} - ${parts.slice(3).join(" - ")}` : raw;
+}
+
 function placeCore(name: string): string {
   const raw = (name ?? "").trim();
   const parts = raw.split(" - ");

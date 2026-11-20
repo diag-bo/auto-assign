@@ -25,7 +25,7 @@ import { appendStopTodos, cancelBooking, collectTodo, createCollectJob, deliverT
 import { loadConfig } from "@/lib/config";
 import { loadLeaveEntries } from "@/lib/leave-config";
 import { shortCode } from "@/lib/psc-dup";
-import { placeLabel } from "@/lib/place-label";
+import { codeLabel, placeLabel } from "@/lib/place-label";
 import { indexCustomer, rankCustomers, type Customer, type Indexed } from "@/lib/customer-search";
 import { vnDate, vnTimestamp } from "@/lib/time";
 import { acquireCreateLock, releaseCreateLock, pushRunLog } from "@/lib/smart-log-kv";
@@ -95,7 +95,7 @@ async function salesCustomers(email: string, psc: string): Promise<Customer[]> {
   }
   const rows = await repClients<{ customer_name: string | null; address_line_1: string | null }>(email, `is_active=eq.true${scope}`,
     "customer_id,client_code,customer_name:cartrack->>customer_name,address_line_1:cartrack->>address_line_1");
-  return rows.filter((r) => r.customer_name).map((r) => ({ customer_id: r.customer_id, customer_name: r.customer_name!, address_line_1: r.address_line_1 }));
+  return rows.filter((r) => r.customer_name).map((r) => ({ customer_id: r.customer_id, customer_name: codeLabel(r.customer_name!), address_line_1: r.address_line_1 }));
 }
 
 /** The sales login when the request is in sales mode; null for /qr; "denied" for sales
@@ -106,6 +106,18 @@ function salesMode(req: NextRequest, flag: unknown): SalesUser | null | "denied"
 }
 
 export async function GET(req: NextRequest) {
+  // ?pscs=1 (sales) → every PSC's address, for the /sales KQ/VT picker.
+  if (req.nextUrl.searchParams.has("pscs")) {
+    if (!salesUser(req)) return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
+    const ids = [...new Set(PSC_ROUTES.map((r) => r.pickup))];
+    try {
+      const rows = await sbSelect<{ customer_id: string; address: string | null }>("master_clients_read",
+        `select=customer_id,address:cartrack->>address_line_1&customer_id=in.(${ids.join(",")})`);
+      return NextResponse.json({ addresses: Object.fromEntries(rows.map((r) => [r.customer_id, r.address ?? ""])) });
+    } catch (e) {
+      return NextResponse.json({ error: String(e).slice(0, 200) }, { status: 502 });
+    }
+  }
   // ?booked=<PSC id>&date=YYYY-MM-DD → what that PSC booked that day, with where each is now.
   const booked = req.nextUrl.searchParams.get("booked");
   if (booked) {

@@ -396,3 +396,14 @@ export function keepOnBranchFeed(code: string, job: FeedJob): boolean {
   const ownRequest = pickup?.customer_id === code;
   return ownRequest || (dropoff?.customer_id === code && isBranchRun(job));
 }
+
+/** A trip a sales rep may cancel from /sales: a client request as SPC creates it — a
+ *  reference to cancel by, no Cartrack label (home bookings, Lịch cố định, PSC and
+ *  KQ/VT legs all carry one), no route plan behind it (plan slots regenerate daily —
+ *  same test as assign.ts hasPlanAttached), and no stop started. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isSalesCancellable(job: any): boolean {
+  return !!job?.reference_number && !(job.labels ?? []).length &&
+    job.last_assigned_plan_id == null && !(Array.isArray(job.plans) && job.plans.length > 0) &&
+    !(job.stops ?? []).some(isStopStarted);
+}

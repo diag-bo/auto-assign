@@ -15,10 +15,11 @@ export const SALES_COOKIE_MAX_AGE = TTL_MS / 1000;
 
 export type SalesUser = { email: string; name: string };
 
-/** Sign-ins that see and act on EVERY client, not only their own. Exact full
- *  address: long.nguyen2@… (3, 4, …) are ordinary reps. */
+/** Sign-ins that see and act on EVERY client, not only their own. The address with
+ *  any "+tag" dropped must match exactly: long.nguyen+delivery_admin@diag.vn is an
+ *  admin, long.nguyen4@ / long.nguyen4+x@ are ordinary reps. */
 const SALES_ADMINS = new Set(["long.nguyen@diag.vn"]);
-export const isSalesAdmin = (email: string) => SALES_ADMINS.has(email.trim().toLowerCase());
+export const isSalesAdmin = (email: string) => SALES_ADMINS.has(email.trim().toLowerCase().replace(/\+[^@]*@/, "@"));
 
 function hmac(body: string): string {
   const s = process.env.DRIVER_SESSION_SECRET || process.env.CARTRACK_WEB_PASS || "";

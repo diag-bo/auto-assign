@@ -17,10 +17,53 @@ type Prediction = {
 type ClientResult = { code: string; client_legal_name: string };
 export type SalesUser = { email: string; name: string };
 
-// The KQ/VT tab's PSC list, D001 first (every client may take from it).
-const KQVT_PSCS = [...new Map(PSC_ROUTES.map((r) => [r.pickup, r.psc_pickup])).entries()]
+// The KQ/VT tab's PSC list, D001 first (every client may take from it). "BRA - D003" → "D003".
+const KQVT_PSCS = [...new Map(PSC_ROUTES.map((r) => [r.pickup, r.psc_pickup.replace(/^BRA\s*-\s*/i, "")])).entries()]
   .map(([id, name]) => ({ id, name }))
   .sort((a, b) => (a.id === LAB_CUSTOMER_ID ? -1 : b.id === LAB_CUSTOMER_ID ? 1 : a.name.localeCompare(b.name)));
+
+/** The KQ/VT PSC picker: name with its address small and grey beneath, which a native
+ *  <select> cannot draw. A button opens a searchable list; picking closes it. */
+function PscPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const [addresses, setAddresses] = useState<Record<string, string>>({});
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    fetch("/api/psc-delivery?pscs=1").then((r) => r.json()).then((d) => setAddresses(d.addresses ?? {})).catch(() => {});
+  }, []);
+  const picked = KQVT_PSCS.find((p) => p.id === value);
+  const shown = KQVT_PSCS.filter((p) => tripMatches({ from_name: p.name, code: addresses[p.id] ?? "" }, q));
+  const line = (p: { id: string; name: string }) => (<>
+    <span className="block text-sm font-semibold text-slate-800">{p.name}</span>
+    {addresses[p.id] && <span className="block text-xs text-slate-400 truncate">{addresses[p.id]}</span>}
+  </>);
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        className="w-full flex items-center gap-2 border rounded-xl px-3 py-2.5 bg-white text-left focus:outline-none focus:ring-2 focus:ring-slate-400">
+        <span className="min-w-0 flex-1">{picked && line(picked)}</span>
+        <span aria-hidden className="text-slate-400">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border rounded-xl shadow-lg">
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm PSC hoặc địa chỉ"
+            aria-label="Tìm PSC" className="w-full border-b rounded-t-xl px-3 py-2.5 text-sm focus:outline-none" />
+          <ul role="listbox" className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+            {shown.map((p) => (
+              <li key={p.id} role="option" aria-selected={p.id === value}>
+                <button type="button" onClick={() => { onChange(p.id); setOpen(false); setQ(""); }}
+                  className={`w-full text-left px-3 py-2 hover:bg-slate-50 ${p.id === value ? "bg-blue-50" : ""}`}>
+                  {line(p)}
+                </button>
+              </li>
+            ))}
+            {shown.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">Không có PSC nào khớp.</li>}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Huỷ list filter: every word of the query somewhere in the client name or trip code,
  *  accents and case ignored. */
@@ -430,6 +473,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const [trips, setTrips] = useState<Trip[] | null>(null);
   const [tripsError, setTripsError] = useState("");
   const [tripQuery, setTripQuery] = useState("");
+  const [confirmRef, setConfirmRef] = useState<string | null>(null);
   const [cancellingRef, setCancellingRef] = useState<string | null>(null);
   const loadTrips = async () => {
     setTrips(null); setTripsError("");
@@ -1132,90 +1176,100 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
 
         {tab === "kqvt" && user && (
           <div className="p-4 space-y-3 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
-            <label className="block">
+            <div>
               <span className="block text-sm font-semibold text-slate-700 mb-1">KQ/VT đang ở PSC</span>
-              <select
-                value={kqvtPsc}
-                onChange={(e) => setKqvtPsc(e.target.value)}
-                className="w-full border rounded-xl px-3 py-3 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-              >
-                {KQVT_PSCS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <PscPicker value={kqvtPsc} onChange={setKqvtPsc} />
               <span className="block text-xs text-slate-500 mt-1">Chỉ hiện khách hàng của bạn có điểm giao mặc định, điểm giao thay thế hoặc điểm giao khi đóng cửa là PSC này. D001: mọi khách hàng.</span>
-            </label>
+            </div>
             {/* key: a different PSC is a different booking — start the form afresh. */}
             <DeliveryBooking key={kqvtPsc} pickup={kqvtPsc} date="" sales />
           </div>
         )}
 
-        {tab === "reject" && (
-          <div className="p-6 space-y-4 border-t border-slate-100">
-            <div className="space-y-4">
-              <select
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                aria-label="Lý do huỷ"
-                className="w-full border rounded-xl px-3 py-3 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-              >
-                {REJECT_REASONS.map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
-              {rejectResult && (
-                <div role="status" className={`rounded-xl p-3.5 text-sm font-medium text-center ${
-                  rejectResult.ok
-                    ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
-                    : "bg-red-50 border border-red-200 text-red-800"
-                }`}>
-                  {rejectResult.msg}
-                </div>
-              )}
-              {user && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Chuyến chờ lấy của khách hàng bạn</p>
-                    <button onClick={loadTrips} disabled={trips === null} className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-40">Tải lại</button>
-                  </div>
-                  {trips === null ? (
-                    <p className="text-sm text-slate-400">Đang tải...</p>
-                  ) : tripsError ? (
-                    <p className="text-sm text-red-600">{tripsError}</p>
-                  ) : trips.length === 0 ? (
-                    <p className="text-sm text-slate-400">Không có chuyến nào đang chờ lấy (48 giờ qua).</p>
-                  ) : (<>
-                    <input
-                      value={tripQuery}
-                      onChange={(e) => setTripQuery(e.target.value)}
-                      placeholder="Tìm theo tên hoặc mã khách hàng"
-                      aria-label="Tìm chuyến theo khách hàng"
-                      className="w-full border rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-                    />
-                    <ul className="divide-y border rounded-xl">
-                      {trips.filter((t) => tripMatches(t, tripQuery)).map((t) => (
-                        <li key={t.code} className="flex items-center gap-3 p-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-slate-800 truncate">{t.from_name ?? "—"}</p>
-                            <p className="text-xs text-slate-500 truncate">→ {t.to_name ?? "—"}</p>
-                            <p className="text-xs text-slate-400 truncate">
-                              {t.created_at ? new Date(t.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : ""}
-                              {" · "}{t.status === "open" ? "Chờ điều phối" : "Đã có tài xế"}{" · "}{t.code}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => rejectJob(t.code)}
-                            disabled={rejectLoading}
-                            className="shrink-0 px-3 py-2 rounded-lg text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-40"
-                          >
-                            {cancellingRef === t.code ? (rejectRetrying ? "Thử lại..." : "Đang huỷ...") : "Huỷ"}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                    {!trips.some((t) => tripMatches(t, tripQuery)) && <p className="text-sm text-slate-400">Không có chuyến nào khớp.</p>}
-                  </>)}
-                </div>
-              )}
+        {tab === "reject" && user && (
+          <div className="p-6 space-y-3 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Chuyến hôm nay chưa lấy mẫu</p>
+              <button onClick={loadTrips} disabled={trips === null || rejectLoading} className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-40">Tải lại</button>
             </div>
+            {rejectResult && (
+              <div role="status" className={`rounded-xl p-3 text-sm font-medium ${
+                rejectResult.ok
+                  ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+                  : "bg-red-50 border border-red-200 text-red-800"
+              }`}>
+                {rejectResult.msg}
+              </div>
+            )}
+            {trips === null ? (
+              <p className="text-sm text-slate-400 py-6 text-center">Đang tải chuyến...</p>
+            ) : tripsError ? (
+              <p className="text-sm text-red-600">{tripsError}</p>
+            ) : trips.length === 0 ? (
+              <p className="text-sm text-slate-500 py-6 text-center">Hôm nay không có chuyến nào của khách hàng bạn còn huỷ được.</p>
+            ) : (<>
+              <input
+                value={tripQuery}
+                onChange={(e) => setTripQuery(e.target.value)}
+                placeholder="Tìm theo tên hoặc mã khách hàng"
+                aria-label="Tìm chuyến theo khách hàng"
+                className="w-full border rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
+              />
+              <ul className="divide-y border rounded-xl">
+                {trips.filter((t) => tripMatches(t, tripQuery)).map((t) => (
+                  <li key={t.code} className="p-3 space-y-2">
+                    <div className="flex items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-800 break-words">{t.from_name ?? "—"}</p>
+                        <p className="text-xs text-slate-500 break-words">→ {t.to_name ?? "—"}</p>
+                        <p className="text-xs text-slate-400 truncate">
+                          {t.created_at ? new Date(t.created_at).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" }) : ""}
+                          {" · "}{t.status === "open" ? "Chờ điều phối" : "Đã có tài xế"}
+                        </p>
+                      </div>
+                      {confirmRef !== t.code && (
+                        <button
+                          onClick={() => { setConfirmRef(t.code); setRejectReason(REJECT_REASONS[0]); setRejectResult(null); }}
+                          disabled={rejectLoading}
+                          className="shrink-0 px-3 py-2 rounded-lg text-sm font-semibold text-red-700 border border-red-200 hover:bg-red-50 disabled:opacity-40"
+                        >
+                          Huỷ
+                        </button>
+                      )}
+                    </div>
+                    {confirmRef === t.code && (
+                      <div className="rounded-lg bg-red-50 border border-red-100 p-2.5 space-y-2">
+                        <select
+                          value={rejectReason}
+                          onChange={(e) => setRejectReason(e.target.value)}
+                          aria-label="Lý do huỷ"
+                          className="w-full border rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
+                        >
+                          {REJECT_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setConfirmRef(null)}
+                            disabled={rejectLoading}
+                            className="flex-1 py-2 rounded-lg text-sm font-semibold text-slate-600 bg-white border hover:bg-slate-50 disabled:opacity-40"
+                          >
+                            Thôi
+                          </button>
+                          <button
+                            onClick={async () => { await rejectJob(t.code); setConfirmRef(null); }}
+                            disabled={rejectLoading}
+                            className="flex-1 py-2 rounded-lg text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60"
+                          >
+                            {cancellingRef === t.code ? (rejectRetrying ? "Đang thử lại..." : "Đang huỷ...") : "Xác nhận huỷ"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {!trips.some((t) => tripMatches(t, tripQuery)) && <p className="text-sm text-slate-400">Không có chuyến nào khớp.</p>}
+            </>)}
           </div>
         )}
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL, jsonRpc, getHeaders, assignJob, cancelJobFromTimeline, jobVnDate, type Env } from "@/lib/cartrack";
-import { isStopStarted } from "@/lib/job-filters";
+import { isSalesCancellable, isStopStarted } from "@/lib/job-filters";
 import { pushRunLog } from "@/lib/smart-log-kv";
 import { vnTimestamp } from "@/lib/time";
 import { repClients, salesByline, salesUser } from "@/lib/sales-session";
@@ -54,6 +54,11 @@ export async function POST(req: NextRequest) {
         { error: "Job đã bị huỷ/từ chối trước đó", code: "already_cancelled" },
         { status: 409 }
       );
+    }
+
+    // Only the client requests the Huỷ list offers (no booking, plan slot, Lịch cố định…).
+    if (!isSalesCancellable({ ...job, stops: [] })) {
+      return NextResponse.json({ error: "Chuyến này không huỷ được từ Sales — liên hệ điều phối.", code: "not_sales" }, { status: 409 });
     }
 
     // Only allow reject if no stop has progressed beyond status 1 (Chờ lấy)
