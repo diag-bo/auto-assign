@@ -71,8 +71,11 @@ export function verdict(average: number, base = BASE_PRICE_VND): Verdict {
 export type AccountKind = "FT" | "PT";
 /** Roster labels: "F - P - DC… Name" is full-time, "P - P - PT… Name" part-time.
  *  Anything else (3PL proxy, Học việc trainees, staff accounts) gets no allowance. */
+/** Staff who never get the allowance, by staff code (supervisor, 2026-11-20). */
+export const EXCLUDED_STAFF = ["DC100043"]; // Lê Huỳnh Hồng Huệ
 export const accountKind = (label: string): AccountKind | null =>
-  label.startsWith("F - ") ? "FT" : label.startsWith("P - ") ? "PT" : null;
+  EXCLUDED_STAFF.some((code) => label.split(" ").includes(code)) ? null
+    : label.startsWith("F - ") ? "FT" : label.startsWith("P - ") ? "PT" : null;
 
 export interface AllowanceRow {
   driver_id: string; name: string; kind: AccountKind; km: number;
@@ -100,41 +103,65 @@ export const TRIP_COLUMNS = [
   "benchmark_mins", "available_at", "idle_mins", "unscored",
 ] as const; // master_driver_id / master_from_id / master_to_id were dropped from tat_legs after 09/2026
 
-/* ---- PVOil page parsing (fetch lives in the route) ------------------------ */
+/* ---- Petrolimex import (fetches live in the route) ------------------------- */
 
-/** Every price-change date on the PVOil news page's picker, newest first. */
-export const parsePvoilDates = (html: string): string[] =>
-  [...html.matchAll(/<option[^>]*value="(\d{4}-\d{2}-\d{2})"/g)].map((m) => m[1]);
+export const PETROLIMEX_RELEASES = "https://www.petrolimex.com.vn/ndi/thong-cao-bao-chi";
+export const GIAXANG_HISTORY = "https://giaxanghomnay.com/lich-su-gia-xang";
 
-/** One load-view table → the E10 RON 95-III change it announces.
- *  "Giá điều chỉnh lúc 24:00 ngày 15/10/2026" is midnight INTO the 16th. */
-export function parsePvoilTable(html: string): PriceChange | null {
-  const when = html.match(/lúc\s*(\d{1,2}):(\d{2})\s*ngày\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  const row = html.match(/E10\s*RON\s*95-III\s*<\/td>\s*<td[^>]*>\s*([\d.]+)\s*đ/);
-  if (!when || !row) return null;
-  const [, hh, mm, dd, mo, yyyy] = when.map(Number);
-  const at = fromMs(Date.UTC(yyyy, mo - 1, dd, hh, mm)); // Date.UTC rolls 24:00 into the next day
-  return { at, price: Number(row[1].replace(/\./g, "")) };
-}
-
-/** Every load-view table in a pasted blob (what PVOIL_BOOKMARKLET copies), one
- *  change per effective time, oldest first. */
-export function parsePvoilTables(text: string): PriceChange[] {
-  const byAt = new Map<string, number>();
-  for (const part of text.split(/(?=<table)/i)) {
-    const c = parsePvoilTable(part);
-    if (c) byAt.set(c.at, c.price);
+/** Petrolimex price releases on one list page, with the exact effective time
+ *  from the link ("…dieu-chinh-gia-xang-dau-tu-22-gio-00-phut-ngay-03-11-2026"). */
+export function parsePetrolimexReleases(html: string): { at: string; url: string }[] {
+  const seen = new Map<string, string>();
+  for (const m of html.matchAll(/href="([^"]*dieu-chinh-gia-xang-dau-tu-(\d{1,2})-gio-(\d{2})-phut-ngay-(\d{1,2})-(\d{1,2})-(\d{4})[^"]*)"/g)) {
+    const at = fromMs(Date.UTC(+m[6], +m[5] - 1, +m[4], +m[2], +m[3]));
+    seen.set(at, m[1].startsWith("http") ? m[1] : `https://www.petrolimex.com.vn${m[1]}`);
   }
-  return [...byAt].map(([at, price]) => ({ at, price })).sort((a, b) => a.at.localeCompare(b.at));
+  return [...seen].map(([at, url]) => ({ at, url }));
 }
 
 /**
- * The "Lấy giá PVOil" bookmark. Run ON pvoil.com.vn/tin-gia-xang-dau, where the
- * page may read its own tables (our server gets 403, and a browser will not let
- * the dashboard read another site): fetches every price table of the last 75
- * days — the previous month plus the change in force on its 1st — and copies
- * the HTML for the dashboard's paste box. The copy happens after the fetches, by
- * which time Chrome may no longer count the click, so it falls back to a
- * selected text box for Ctrl+C.
+ * Petrolimex's E10 RON 95-III (Mức 3) figures on giaxanghomnay.com, by DATE —
+ * Petrolimex itself publishes them only as pictures. Dated 15:00; the release
+ * list supplies the real time when it differs.
  */
-export const PVOIL_BOOKMARKLET = `javascript:(async()=>{const s=document.querySelector('#ddlpricedate');if(!s){alert('Mở trang pvoil.com.vn/tin-gia-xang-dau rồi bấm lại.');return}const cut=new Date(Date.now()-75*864e5).toISOString().slice(0,10);const ds=[...s.options].map(o=>o.value).filter(d=>d>=cut);const parts=[];for(const d of ds){const r=await fetch('/api/oilprice/load-view?date='+d);parts.push(await r.text())}const txt=parts.join('\\n');try{await navigator.clipboard.writeText(txt);alert('Đã chép '+ds.length+' bảng giá. Dán vào Phụ cấp xăng trên dashboard.')}catch(e){const t=document.createElement('textarea');t.value=txt;t.style.cssText='position:fixed;inset:24px;z-index:99999;width:90vw;height:80vh';document.body.append(t);t.select();alert('Bấm Ctrl+C để chép '+ds.length+' bảng giá, rồi dán vào dashboard.')}})()`;
+export function parseGiaxanghomnay(html: string): PriceChange[] {
+  return html.split(/Điều chỉnh ngày\s*/).slice(1).flatMap((block) => {
+    const d = block.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    const row = block.match(/E10\s*RON\s*95(?:\s*Mức\s*3|-III)?\s*<\/td>\s*<td[^>]*>\s*([\d.,]+)/);
+    return d && row ? [{ at: `${d[3]}-${d[2]}-${d[1]}T15:00`, price: Number(row[1].replace(/[.,]/g, "")) }] : [];
+  });
+}
+
+/**
+ * Release times + aggregator figures → the changes to import, and the releases
+ * with no figure (giaxanghomnay has skipped a petrol change before — 24/09/2026),
+ * which the tab asks someone to type from the release. A figure with no release
+ * (the 15/10/2026 voluntary −300đ came as an article, not a release) is kept at 15:00.
+ */
+export function petrolimexChanges(releases: { at: string; url: string }[], figures: PriceChange[]) {
+  const byDate = new Map(figures.map((f) => [f.at.slice(0, 10), f.price]));
+  const found: PriceChange[] = [], missing: { at: string; url: string }[] = [];
+  for (const r of releases) {
+    const price = byDate.get(r.at.slice(0, 10));
+    if (price) found.push({ at: r.at, price }); else missing.push(r);
+  }
+  const releaseDates = new Set(releases.map((r) => r.at.slice(0, 10)));
+  for (const f of figures) if (!releaseDates.has(f.at.slice(0, 10))) found.push(f);
+  return { found, missing };
+}
+
+const DAY_MS = 86_400_000;
+/** Changes worth saving: none within a day of one already held. */
+export const importable = (held: PriceChange[], incoming: PriceChange[]): PriceChange[] =>
+  incoming.filter((c) => !held.some((h) => Math.abs(toMs(h.at) - toMs(c.at)) < DAY_MS));
+
+/** Saved rows → one price per time; a typed ('manual') price wins over an import. */
+export function effectivePrices(rows: { at: string; price: number; source: string }[]): (PriceChange & { source: string })[] {
+  const byAt = new Map<string, PriceChange & { source: string }>();
+  for (const r of rows) {
+    if (r.source !== "petrolimex" && r.source !== "manual") continue;
+    const cur = byAt.get(r.at);
+    if (!cur || r.source === "manual") byAt.set(r.at, { at: r.at, price: r.price, source: r.source });
+  }
+  return [...byAt.values()].sort((a, b) => a.at.localeCompare(b.at));
+}
