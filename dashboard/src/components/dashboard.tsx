@@ -25,6 +25,7 @@ import { SalesTool } from "./sales-tool";
 import { DriverListPanel } from "./driver-list-panel";
 import { PayTeamPanel } from "./pay-team-panel";
 import { OvertimeReviewPanel } from "./overtime-review-panel";
+import { GasAllowancePanel } from "./gas-allowance-panel";
 import { LocationsPanel, TplMappingsPanel } from "./locations-panel";
 import { ClientBotsPanel } from "./client-bots-panel";
 import { toast } from "sonner";
@@ -39,7 +40,7 @@ import type { LeaveSuppression } from "@/lib/leave-suppression";
 import type { LabcenterMetadataReport } from "@/lib/master-sync";
 
 type Env = "prod" | "uat";
-type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "pay" | "overtime" | "drivers" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
+type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "pay" | "overtime" | "gas" | "drivers" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
 
 export function Dashboard() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -694,7 +695,7 @@ export function Dashboard() {
 
   const setupActive = ["config", "schedule", "shifts", "drivers", "sunday", "locations", "tpl", "bots", "newcustomer"].includes(rightTab);
   const operationsActive = rightTab === "distance" || rightTab === "tat";
-  const payActive = rightTab === "pay" || rightTab === "overtime";
+  const payActive = rightTab === "pay" || rightTab === "overtime" || rightTab === "gas";
 
   /** Main menu, on the dark header bar. Icons only from 2xl: at 1280–1536px
    *  they are what pushed the bar onto a second line. */
@@ -862,6 +863,7 @@ export function Dashboard() {
           {payActive && <nav aria-label="Lương" className="flex flex-wrap items-center gap-1 shrink-0">
             <button aria-pressed={rightTab === "pay"} onClick={() => setRightTab("pay")} className={tabBtn(rightTab === "pay")}>Lương PT</button>
             <button aria-pressed={rightTab === "overtime"} onClick={() => setRightTab("overtime")} className={tabBtn(rightTab === "overtime")}>Tăng ca</button>
+            <button aria-pressed={rightTab === "gas"} onClick={() => setRightTab("gas")} className={tabBtn(rightTab === "gas")}>Phụ cấp xăng</button>
           </nav>}
           {syncFailure && (
             <p role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-900 shrink-0">
@@ -1030,6 +1032,8 @@ export function Dashboard() {
               </div>
             ) : rightTab === "overtime" ? (
               <div className="h-[72vh] lg:h-full"><OvertimeReviewPanel /></div>
+            ) : rightTab === "gas" ? (
+              <div className="h-[72vh] lg:h-full"><GasAllowancePanel /></div>
             ) : rightTab === "drivers" ? (
               <div className="h-[72vh] lg:h-full"><DriverListPanel /></div>
             ) : rightTab === "newcustomer" ? (
