@@ -434,7 +434,10 @@ export async function fetchOvertime(page, status = 1) {
       body: {
         PageSize: OVERTIME_PAGE_SIZE, PageIndex: pageIndex, Filter: null, CustomFilter: null, QuickSearch: null,
         CustomParam: { OrganizationUnitID: null, Inactive: false, Status: status },
-        Sort: b64([{ selector: "FullName", desc: false }]), Columns: OVERTIME_COLUMNS,
+        // Name alone is not unique: same-name rows swap places between pages, so
+        // some come twice and others never (2026-11-19: 14 of 597 lost). The id
+        // tie-break makes the order stable; the dedupe below is the backstop.
+        Sort: b64([{ selector: "FullName", desc: false }, { selector: "OverTimeID", desc: false }]), Columns: OVERTIME_COLUMNS,
       },
     });
     if (resp.status !== 200 || !resp.data?.Success) {
@@ -445,6 +448,7 @@ export async function fetchOvertime(page, status = 1) {
     if (rows.length < OVERTIME_PAGE_SIZE) break;
     await page.waitForTimeout(300);
   }
-  log(`overtime status ${status}: ${all.length} request(s)`);
-  return all;
+  const unique = [...new Map(all.map((r) => [r.OverTimeID, r])).values()];
+  log(`overtime status ${status}: ${unique.length} request(s)`);
+  return unique;
 }
