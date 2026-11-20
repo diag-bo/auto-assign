@@ -3,12 +3,18 @@ import { BASE_URL, jsonRpc, getHeaders, assignJob, cancelJobFromTimeline, jobVnD
 import { isStopStarted } from "@/lib/job-filters";
 import { pushRunLog } from "@/lib/smart-log-kv";
 import { vnTimestamp } from "@/lib/time";
+import { repClients, salesByline, salesUser } from "@/lib/sales-session";
+import { notifyAdminGroup } from "@/lib/zalo";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
 
 export async function POST(req: NextRequest) {
   const env = (req.nextUrl.searchParams.get("env") ?? "prod") as Env;
+  // The /sales login guards the page, not this address: without this check anyone
+  // who knew it could cancel any trip by reference.
+  const user = salesUser(req);
+  if (!user) return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
 
   try {
     const { reference_number, reject_reason } = await req.json();
@@ -55,6 +61,12 @@ export async function POST(req: NextRequest) {
     const stops: any[] = job.stops ?? [];
     const pickup = stops.find((s: any) => s.stop_type_id === 1);
     const pickupCustomerName = pickup?.customer_name ?? null;
+    // Only the rep's own clients: the pickup's master client row names its sales owner.
+    const pickupId = typeof pickup?.customer_id === "string" ? pickup.customer_id : "";
+    const mine = pickupId ? await repClients(user.email, `customer_id=eq.${encodeURIComponent(pickupId)}`).catch(() => []) : [];
+    if (!mine.length) {
+      return NextResponse.json({ error: "Chuyến này không thuộc khách hàng của bạn", code: "not_owner" }, { status: 403 });
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dropoffCustomerName = stops.find((s: any) => s.stop_type_id === 2)?.customer_name ?? "—";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -105,8 +117,12 @@ export async function POST(req: NextRequest) {
     await pushRunLog([{
       ts: vnTimestamp(),
       level: "OK",
-      msg: `[Sales] Huỷ job: Job ${job.job_id}, Ref: ${job.reference_number}, Lý do: ${reject_reason} | ${pickupCustomerName ?? "—"} → ${dropoffCustomerName}`,
+      msg: `[Sales] Huỷ job: Job ${job.job_id}, Ref: ${job.reference_number}, Lý do: ${reject_reason} | ${pickupCustomerName ?? "—"} → ${dropoffCustomerName} | ${user.name || user.email}`,
     }]).catch(() => {});
+    await notifyAdminGroup(
+      `❌ Sales huỷ chuyến qua /sales\n${pickupCustomerName ?? "—"} → ${dropoffCustomerName}\nMã: ${job.reference_number}\nLý do: ${reject_reason}` +
+        salesByline(req),
+    );
     return NextResponse.json({
       success: true,
       job_id: job.job_id,

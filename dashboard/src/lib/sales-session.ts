@@ -7,6 +7,7 @@
  */
 import crypto from "crypto";
 import type { NextRequest } from "next/server";
+import { sbSelect } from "./supabase-rest";
 
 export const SALES_COOKIE = "sales_session";
 const TTL_MS = 12 * 60 * 60 * 1000;
@@ -41,3 +42,20 @@ export function verifySalesSession(token: string | undefined | null): SalesUser 
 }
 
 export const salesUser = (req: NextRequest) => verifySalesSession(req.cookies.get(SALES_COOKIE)?.value);
+
+/** "\n👤 Name (email)" for an admin-group notice, "" when nobody is signed in
+ *  (the dashboard's own copy of the sales tool has no session). */
+export function salesByline(req: NextRequest): string {
+  const u = salesUser(req);
+  return u ? `\n👤 ${u.name ? `${u.name} (${u.email})` : u.email}` : "";
+}
+
+/** Master client rows (one per Cartrack customer) matching a PostgREST filter that
+ *  `email` owns or supervises. Owner/supervisor come from Labcenter via the morning
+ *  sync, so a client reassigned today follows its new rep tomorrow. */
+export async function repClients(email: string, filter: string): Promise<{ customer_id: string; client_code: string | null }[]> {
+  const me = email.toLowerCase();
+  const rows = await sbSelect<{ customer_id: string; client_code: string | null; sales_email: string | null; supervisor_email: string | null }>(
+    "master_clients_read", `select=customer_id,client_code,sales_email,supervisor_email&${filter}`);
+  return rows.filter((r) => r.sales_email?.toLowerCase() === me || r.supervisor_email?.toLowerCase() === me);
+}

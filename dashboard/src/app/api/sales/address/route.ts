@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { updateCustomerAddress, type Env } from "@/lib/cartrack";
 import { getAdminToken, getCartrackCustomerId, updateLocationAddress } from "@/lib/labcenter";
 import { notifyAdminGroup } from "@/lib/zalo";
+import { salesByline } from "@/lib/sales-session";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
@@ -62,7 +63,7 @@ export async function PUT(req: NextRequest) {
       // Only on a clean write: a partial one asks the user to retry, and the
       // retry is what should announce the address.
       await notifyAdminGroup(
-        `📍 Sales đổi địa chỉ\n${customer_name?.trim() || `Địa điểm #${location_id}`}\n${address}`,
+        `📍 Sales đổi địa chỉ\n${customer_name?.trim() || `Địa điểm #${location_id}`}\n${address}` + salesByline(req),
       );
       return NextResponse.json({ success: true, address_line_1: address, latitude, longitude, cartrack, labcenter });
     }

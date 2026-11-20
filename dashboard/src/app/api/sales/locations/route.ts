@@ -7,7 +7,8 @@ import {
   searchManagedClients,
   updateLocationPhone,
 } from "@/lib/labcenter";
-import { salesUser } from "@/lib/sales-session";
+import { salesByline, salesUser } from "@/lib/sales-session";
+import { notifyAdminGroup } from "@/lib/zalo";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
@@ -69,7 +70,7 @@ export async function PUT(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { location_id, phone } = body as { location_id?: number; phone?: string };
+    const { location_id, phone, customer_name } = body as { location_id?: number; phone?: string; customer_name?: string };
 
     if (typeof location_id !== "number") {
       return NextResponse.json({ error: "Missing location_id" }, { status: 400 });
@@ -98,6 +99,10 @@ export async function PUT(req: NextRequest) {
     const cartrack = await updateCustomerPhone(customerId, normalized, env);
 
     if (labcenter.ok && cartrack.ok) {
+      // Only on a clean write, as the address notice: a retry announces it.
+      await notifyAdminGroup(
+        `📞 Sales đổi SĐT\n${customer_name?.trim() || `Địa điểm #${location_id}`}\n${normalized}` + salesByline(req),
+      );
       return NextResponse.json({ success: true, phone: normalized, labcenter, cartrack });
     }
 

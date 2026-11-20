@@ -4,6 +4,7 @@ import { DELIVERY_BASE, getAdminToken, labcenterFetch, listLocationsByClientCode
 import { loadPscRoutes } from "@/lib/psc-config";
 import { haversineKm } from "@/lib/distance";
 import { notifyAdminGroup } from "@/lib/zalo";
+import { salesByline } from "@/lib/sales-session";
 
 // Node modules throughout; it cannot run in Vercel's Edge runtime.
 export const runtime = "nodejs";
@@ -250,7 +251,8 @@ export async function POST(req: NextRequest) {
       `🆕 Sales tạo khách hàng mới\n${customer_name}\n${address_line_1 || "(không có địa chỉ)"}` +
         (labcenter && !labcenter.ok
           ? `\n⚠️ CHƯA tạo được trên Labcenter (${labcenter.error}). Cartrack id: ${customer.customer_id}`
-          : ""),
+          : "") +
+        salesByline(req),
     );
 
     if (env === "prod" && customer?.customer_id) {

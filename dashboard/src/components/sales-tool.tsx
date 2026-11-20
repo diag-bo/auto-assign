@@ -362,8 +362,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const clientEndpoint = user ? "/api/sales/clients" : "/api/labcenter/client";
   const [tab, setTab] = useState<"customer" | "edit" | "reject">("customer");
 
-  // Reject job state — manual reference entry (existing)
-  const [refNumber, setRefNumber] = useState("");
+  // Reject job state
   const [rejectReason, setRejectReason] = useState(REJECT_REASONS[0]);
   const [rejectLoading, setRejectLoading] = useState(false);
   const [rejectRetrying, setRejectRetrying] = useState(false);
@@ -409,9 +408,28 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
     return { kind: "failed", msg: data.error ?? "Huỷ thất bại" };
   };
 
-  const rejectJob = async () => {
-    const ref = refNumber.trim();
-    if (!ref) return;
+  // The rep's own cancellable trips, read when the Huỷ tab opens (signed-in only).
+  type Trip = { code: string; status: string; from_name: string | null; to_name: string | null; created_at: string | null };
+  const [trips, setTrips] = useState<Trip[] | null>(null);
+  const [tripsError, setTripsError] = useState("");
+  const [cancellingRef, setCancellingRef] = useState<string | null>(null);
+  const loadTrips = async () => {
+    setTrips(null); setTripsError("");
+    try {
+      const res = await fetch("/api/sales/trips");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setTrips(data.trips ?? []);
+      else { setTrips([]); setTripsError(data.error ?? "Không tải được danh sách chuyến"); }
+    } catch {
+      setTrips([]); setTripsError("Không kết nối được máy chủ");
+    }
+  };
+  useEffect(() => {
+    if (user && tab === "reject") loadTrips();
+  }, [user, tab]);
+
+  const rejectJob = async (ref: string) => {
+    setCancellingRef(ref);
     setRejectLoading(true);
     setRejectRetrying(false);
     setRejectResult(null);
@@ -436,7 +454,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
       if (out.kind === "ok") {
         const who = out.who ? `, ${out.who}` : "";
         setRejectResult({ ok: true, msg: `Đã huỷ thành công ${out.reference ?? ref}${who}` });
-        setRefNumber("");
+        setTrips((t) => t?.filter((x) => x.code !== ref) ?? t);
       } else if (out.kind === "already_cancelled") {
         setRejectResult({ ok: false, msg: "Job đã bị huỷ/từ chối trước đó" });
       } else if (out.kind === "failed") {
@@ -453,6 +471,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
     } finally {
       setRejectLoading(false);
       setRejectRetrying(false);
+      setCancellingRef(null);
     }
   };
 
@@ -590,7 +609,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
         const res = await fetch("/api/sales/locations", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ location_id: edLocationId, phone: edNewPhone }),
+          body: JSON.stringify({ location_id: edLocationId, phone: edNewPhone, customer_name: edSelectedLocation?.name }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -1093,36 +1112,60 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
         {tab === "reject" && (
           <div className="p-6 space-y-4 border-t border-slate-100">
             <div className="space-y-4">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Huỷ bằng Mã Giao Nhận</p>
-              <input
-                value={refNumber}
-                onChange={(e) => setRefNumber(e.target.value)}
-                placeholder="Dán Mã Giao Nhận Từ SPC"
-                className="w-full border rounded-xl px-3 py-3 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-              />
               <select
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
+                aria-label="Lý do huỷ"
                 className="w-full border rounded-xl px-3 py-3 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
               >
                 {REJECT_REASONS.map((r) => (
                   <option key={r} value={r}>{r}</option>
                 ))}
               </select>
-              <button
-                onClick={rejectJob}
-                disabled={!refNumber.trim() || rejectLoading}
-                className="w-full py-3.5 rounded-xl font-bold text-white text-base bg-red-600 hover:bg-red-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                {rejectRetrying ? "Đang thử lại..." : rejectLoading ? "Đang huỷ..." : "Huỷ yêu cầu giao nhận"}
-              </button>
               {rejectResult && (
-                <div className={`rounded-xl p-3.5 text-sm font-medium text-center ${
+                <div role="status" className={`rounded-xl p-3.5 text-sm font-medium text-center ${
                   rejectResult.ok
                     ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
                     : "bg-red-50 border border-red-200 text-red-800"
                 }`}>
                   {rejectResult.msg}
+                </div>
+              )}
+              {user && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Chuyến chờ lấy của khách hàng bạn</p>
+                    <button onClick={loadTrips} disabled={trips === null} className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-40">Tải lại</button>
+                  </div>
+                  {trips === null ? (
+                    <p className="text-sm text-slate-400">Đang tải...</p>
+                  ) : tripsError ? (
+                    <p className="text-sm text-red-600">{tripsError}</p>
+                  ) : trips.length === 0 ? (
+                    <p className="text-sm text-slate-400">Không có chuyến nào đang chờ lấy (48 giờ qua).</p>
+                  ) : (
+                    <ul className="divide-y border rounded-xl">
+                      {trips.map((t) => (
+                        <li key={t.code} className="flex items-center gap-3 p-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-slate-800 truncate">{t.from_name ?? "—"}</p>
+                            <p className="text-xs text-slate-500 truncate">→ {t.to_name ?? "—"}</p>
+                            <p className="text-xs text-slate-400 truncate">
+                              {t.created_at ? new Date(t.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : ""}
+                              {" · "}{t.status === "open" ? "Chờ điều phối" : "Đã có tài xế"}{" · "}{t.code}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => rejectJob(t.code)}
+                            disabled={rejectLoading}
+                            className="shrink-0 px-3 py-2 rounded-lg text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-40"
+                          >
+                            {cancellingRef === t.code ? (rejectRetrying ? "Thử lại..." : "Đang huỷ...") : "Huỷ"}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>
