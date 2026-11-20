@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ComponentProps } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, ClipboardList, Clock, MapPin } from "lucide-react";
+import { CheckCircle2, ClipboardList, Clock, MapPin, Truck } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DIAG_LOCATIONS } from "@/lib/diag-locations";
@@ -276,6 +276,27 @@ function FailedRow({
       setResolving(false);
     }
   };
+  // "Giao ngay": stop waiting for a visit to the client and send the items on their own
+  // job now (api/kqvt/go). The waiting item moves to the new job, so the row goes.
+  const goKqvt = async () => {
+    if (!window.confirm(`Giao ngay KQ/VT của job ${job.job_id} tới ${job.customer}?\nTạo chuyến giao tận nơi riêng thay vì chờ giao kèm chuyến lấy mẫu.`)) return;
+    setResolving(true);
+    try {
+      const res = await fetch("/api/kqvt/go", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: job.job_id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Không tạo được chuyến giao");
+      setResolved(true);
+      toast.success(`Đã tạo chuyến giao KQ/VT${data.new_job_id ? ` — job ${data.new_job_id}` : ""}`);
+    } catch (e) {
+      toast.error(`Chưa giao ngay được: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setResolving(false);
+    }
+  };
   if (resolved) return null;
 
   return (
@@ -400,6 +421,19 @@ function FailedRow({
                 }}
               >
                 Gán thủ công
+              </Button>
+            )}
+            {job.reason === "KQVT_WAITING" && job.job_id > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-[11px] h-6 px-2 shrink-0"
+                disabled={resolving}
+                onClick={goKqvt}
+                title="Tạo chuyến giao tận nơi ngay, không chờ chuyến lấy mẫu tại khách"
+              >
+                <Truck className="size-3 shrink-0" aria-hidden />
+                Giao ngay
               </Button>
             )}
             {job.reason === "KQVT_WAITING" && (
