@@ -9,6 +9,10 @@
  *                one for that client. The hand-over at the client: lib/kqvt.ts.
  *                Reference "D002→Mai Hoàng Anh_05:43" (short client name).
  *
+ * /sales books through the same route with `sales: 1` (query or body) and a sales
+ * login: the clients are then the REP's own for whom that PSC may hold their items
+ * (salesCustomers), not the PSC's.
+ *
  * Photos/files ride as public links in the drop-off note, uploaded through the same
  * Cartrack carrier as "Cập nhật công" (lib/cartrack-files.ts). The /qr page is open
  * to anyone with the link, so the pickup must be a known PSC and every client a real
@@ -27,6 +31,9 @@ import { vnDate, vnTimestamp } from "@/lib/time";
 import { acquireCreateLock, releaseCreateLock, pushRunLog } from "@/lib/smart-log-kv";
 import { uploadToCartrack, proofUploadConfigured, type UploadFile } from "@/lib/cartrack-files";
 import { MAX_PROOF_FILES, MAX_PROOF_BYTES } from "@/lib/pay-corrections";
+import { LAB_CUSTOMER_ID } from "@/lib/job-filters";
+import { repClients, salesUser, type SalesUser } from "@/lib/sales-session";
+import { sbSelect } from "@/lib/supabase-rest";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
@@ -74,6 +81,30 @@ function directory(): Promise<Map<string, Indexed>> {
   return loading;
 }
 
+/** /sales: the rep's own active clients whose KQ/VT may be at `psc` — the PSC is
+ *  their default drop-off, the one that takes it over when it closes (servedPscs),
+ *  their alternate drop-off in a config rule, or D001 for every client (supervisor,
+ *  2026-11-20; the reverse of /qr's rule). Read from Supabase: no Cartrack directory. */
+async function salesCustomers(email: string, psc: string): Promise<Customer[]> {
+  let scope = "";
+  if (psc !== LAB_CUSTOMER_ID) {
+    const alt = await sbSelect<{ pickup_customer_id: string }>("master_rules_read",
+      `select=pickup_customer_id&active=eq.true&alternate_dropoff_customer_id=eq.${psc}`);
+    const ids = [...new Set(alt.map((r) => r.pickup_customer_id).filter((id) => UUID.test(id)))];
+    scope = `&or=(default_dropoff_id.in.(${servedPscs(psc).join(",")})${ids.length ? `,customer_id.in.(${ids.join(",")})` : ""})`;
+  }
+  const rows = await repClients<{ customer_name: string | null; address_line_1: string | null }>(email, `is_active=eq.true${scope}`,
+    "customer_id,client_code,customer_name:cartrack->>customer_name,address_line_1:cartrack->>address_line_1");
+  return rows.filter((r) => r.customer_name).map((r) => ({ customer_id: r.customer_id, customer_name: r.customer_name!, address_line_1: r.address_line_1 }));
+}
+
+/** The sales login when the request is in sales mode; null for /qr; "denied" for sales
+ *  mode without a login. The mode is explicit so a rep's cookie never changes /qr. */
+function salesMode(req: NextRequest, flag: unknown): SalesUser | null | "denied" {
+  if (!flag) return null;
+  return salesUser(req) ?? "denied";
+}
+
 export async function GET(req: NextRequest) {
   // ?booked=<PSC id>&date=YYYY-MM-DD → what that PSC booked that day, with where each is now.
   const booked = req.nextUrl.searchParams.get("booked");
@@ -91,8 +122,11 @@ export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q") ?? "";
   const psc = req.nextUrl.searchParams.get("psc") ?? "";
   if (!PSC_ROUTES.some((r) => r.pickup === psc)) return NextResponse.json({ error: "Chi nhánh không hợp lệ." }, { status: 400 });
+  const rep = salesMode(req, req.nextUrl.searchParams.get("sales"));
+  if (rep === "denied") return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
   if (q.trim().length < 3) return NextResponse.json({ customers: [] });
   try {
+    if (rep) return NextResponse.json({ customers: rankCustomers((await salesCustomers(rep.email, psc)).map(indexCustomer), q) });
     const [rows, mine] = await Promise.all([directory(), pscClients(psc)]);
     return NextResponse.json({ customers: rankCustomers([...rows.values()].filter((c) => mine.has(c.customer_id)), q) });
   } catch (e) {
@@ -143,11 +177,18 @@ export async function POST(req: NextRequest) {
   if (deliveries.some((d) => !UUID.test(d.customer_id))) {
     return NextResponse.json({ error: "Khách hàng không hợp lệ." }, { status: 400 });
   }
+  const rep = salesMode(req, body?.sales);
+  if (rep === "denied") return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
   // Only the PSC's own clients (supervisor, 2026-11-03); the search shows no others.
-  const mine = await pscClients(route.pickup).catch(() => null);
+  // From /sales: the rep's own clients for whom this PSC is allowed (salesCustomers).
+  const mine = rep
+    ? await salesCustomers(rep.email, route.pickup).then((l) => new Set(l.map((c) => c.customer_id))).catch(() => null)
+    : await pscClients(route.pickup).catch(() => null);
   if (!mine) return NextResponse.json({ error: "Không kiểm tra được khách hàng. Thử lại sau." }, { status: 502 });
   if (deliveries.some((d) => !mine.has(d.customer_id))) {
-    return NextResponse.json({ error: "Chỉ đặt được cho khách hàng có điểm giao mặc định là chi nhánh này." }, { status: 400 });
+    return NextResponse.json({ error: rep
+      ? "Chỉ đặt được cho khách hàng của bạn nhận KQ/VT từ chi nhánh này."
+      : "Chỉ đặt được cho khách hàng có điểm giao mặc định là chi nhánh này." }, { status: 400 });
   }
   const allFiles = deliveries.flatMap((d) => d.files);
   if (allFiles.length && !proofUploadConfigured()) {
@@ -163,7 +204,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Không gửi được yêu cầu. Thử lại sau." }, { status: 502 });
   }
 
-  const psc = shortCode(route.psc_pickup);
+  const psc = shortCode(route.psc_pickup) + (rep ? ` (Sales ${rep.name || rep.email})` : "");
   const failed = (who: string, why: string) =>
     pushRunLog([{ ts: vnTimestamp(), level: "ERROR", msg: `Giao KQ/VT FAILED - ${why} | ${psc} → ${who}` }]).catch(() => {});
 

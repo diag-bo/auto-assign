@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DeliveryBooking } from "@/app/qr/[code]/delivery-booking";
+import { LAB_CUSTOMER_ID } from "@/lib/job-filters";
+import { PSC_ROUTES } from "@/lib/psc-routes-data";
 
 type Prediction = {
   place_id: string;
@@ -13,6 +16,18 @@ type Prediction = {
 
 type ClientResult = { code: string; client_legal_name: string };
 export type SalesUser = { email: string; name: string };
+
+// The KQ/VT tab's PSC list, D001 first (every client may take from it).
+const KQVT_PSCS = [...new Map(PSC_ROUTES.map((r) => [r.pickup, r.psc_pickup])).entries()]
+  .map(([id, name]) => ({ id, name }))
+  .sort((a, b) => (a.id === LAB_CUSTOMER_ID ? -1 : b.id === LAB_CUSTOMER_ID ? 1 : a.name.localeCompare(b.name)));
+
+/** Huỷ list filter: every word of the query somewhere in the client name or trip code,
+ *  accents and case ignored. */
+function tripMatches(t: { from_name: string | null; code: string }, q: string): boolean {
+  const hay = stripDiacritics(`${t.from_name ?? ""} ${t.code}`).toLowerCase();
+  return stripDiacritics(q).toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
 
 const CLIENT_OVERRIDES: Record<string, string> = {
   "21362": "PS315",
@@ -360,7 +375,9 @@ type SalesLocation = { id: number; name: string; phone: string; address: string 
 // the admin dashboard's "Tạo Mới KH": the new-customer form alone, every client.
 export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () => void }) {
   const clientEndpoint = user ? "/api/sales/clients" : "/api/labcenter/client";
-  const [tab, setTab] = useState<"customer" | "edit" | "reject">("customer");
+  const [tab, setTab] = useState<"customer" | "edit" | "kqvt" | "reject">("customer");
+  // KQ/VT tab: the PSC the items are at now. D001 first — every client may take from it.
+  const [kqvtPsc, setKqvtPsc] = useState(LAB_CUSTOMER_ID);
 
   // Reject job state
   const [rejectReason, setRejectReason] = useState(REJECT_REASONS[0]);
@@ -412,6 +429,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   type Trip = { code: string; status: string; from_name: string | null; to_name: string | null; created_at: string | null };
   const [trips, setTrips] = useState<Trip[] | null>(null);
   const [tripsError, setTripsError] = useState("");
+  const [tripQuery, setTripQuery] = useState("");
   const [cancellingRef, setCancellingRef] = useState<string | null>(null);
   const loadTrips = async () => {
     setTrips(null); setTripsError("");
@@ -931,14 +949,17 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
               ? "Tạo địa điểm lấy mẫu cho khách hàng mới"
               : tab === "edit"
               ? "Cập Nhật SĐT & Địa Chỉ"
+              : tab === "kqvt"
+              ? "Giao kết quả / vật tư"
               : "Huỷ yêu cầu giao nhận"}
           </h1>
         </div>
 
-        {user && <div className="grid grid-cols-3 border-t border-slate-100">
+        {user && <div className="grid grid-cols-4 border-t border-slate-100">
           {([
             ["customer", "KH mới"],
             ["edit", "Cập Nhật SĐT & Địa Chỉ"],
+            ["kqvt", "KQ/VT"],
             ["reject", "Huỷ"],
           ] as const).map(([key, label], i) => (
             <button
@@ -1109,6 +1130,24 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
           </div>
         )}
 
+        {tab === "kqvt" && user && (
+          <div className="p-4 space-y-3 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
+            <label className="block">
+              <span className="block text-sm font-semibold text-slate-700 mb-1">KQ/VT đang ở PSC</span>
+              <select
+                value={kqvtPsc}
+                onChange={(e) => setKqvtPsc(e.target.value)}
+                className="w-full border rounded-xl px-3 py-3 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
+              >
+                {KQVT_PSCS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <span className="block text-xs text-slate-500 mt-1">Chỉ hiện khách hàng của bạn có điểm giao mặc định, điểm giao thay thế hoặc điểm giao khi đóng cửa là PSC này. D001: mọi khách hàng.</span>
+            </label>
+            {/* key: a different PSC is a different booking — start the form afresh. */}
+            <DeliveryBooking key={kqvtPsc} pickup={kqvtPsc} date="" sales />
+          </div>
+        )}
+
         {tab === "reject" && (
           <div className="p-6 space-y-4 border-t border-slate-100">
             <div className="space-y-4">
@@ -1143,9 +1182,16 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
                     <p className="text-sm text-red-600">{tripsError}</p>
                   ) : trips.length === 0 ? (
                     <p className="text-sm text-slate-400">Không có chuyến nào đang chờ lấy (48 giờ qua).</p>
-                  ) : (
+                  ) : (<>
+                    <input
+                      value={tripQuery}
+                      onChange={(e) => setTripQuery(e.target.value)}
+                      placeholder="Tìm theo tên hoặc mã khách hàng"
+                      aria-label="Tìm chuyến theo khách hàng"
+                      className="w-full border rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
+                    />
                     <ul className="divide-y border rounded-xl">
-                      {trips.map((t) => (
+                      {trips.filter((t) => tripMatches(t, tripQuery)).map((t) => (
                         <li key={t.code} className="flex items-center gap-3 p-3">
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold text-slate-800 truncate">{t.from_name ?? "—"}</p>
@@ -1165,7 +1211,8 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
                         </li>
                       ))}
                     </ul>
-                  )}
+                    {!trips.some((t) => tripMatches(t, tripQuery)) && <p className="text-sm text-slate-400">Không có chuyến nào khớp.</p>}
+                  </>)}
                 </div>
               )}
             </div>

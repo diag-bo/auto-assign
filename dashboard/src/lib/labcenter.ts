@@ -6,6 +6,8 @@
 // Most spc-delivery endpoints require the DELIVERY_ADMIN role, so they must use
 // the admin account; the receptionist token gets a 403 there.
 
+import { isSalesAdmin } from "./sales-session";
+
 const LOGIN_URL = "https://api-bknd.labcenter.vn/api/v1/auth/login";
 export const DELIVERY_BASE = "https://api.labcenter.vn/spc-delivery";
 
@@ -82,7 +84,7 @@ export async function searchManagedClients(email: string, q: string): Promise<Cl
   const data = await res.json().catch(() => ({}));
   const me = email.toLowerCase();
   return ((data?.data ?? []) as { code: string; client_legal_name?: string; owner?: string; supervisor_email?: string }[])
-    .filter((c) => c.owner?.toLowerCase() === me || c.supervisor_email?.toLowerCase() === me)
+    .filter((c) => isSalesAdmin(me) || c.owner?.toLowerCase() === me || c.supervisor_email?.toLowerCase() === me)
     .map((c) => ({ code: c.code, client_legal_name: c.client_legal_name?.trim() ?? "" }));
 }
 

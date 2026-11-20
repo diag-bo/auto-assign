@@ -104,10 +104,13 @@ function Booked({ list, loading, onRefresh, onCancel, cancelling, error }: {
   );
 }
 
-export function DeliveryBooking({ pickup, date }: { pickup: string; date: string }) {
+/** `sales`: the /sales KQ/VT tab — the rep's own clients for this PSC (the route's
+ *  sales mode), the form open from the start, and no PSC booking list. */
+export function DeliveryBooking({ pickup, date, sales = false }: { pickup: string; date: string; sales?: boolean }) {
   const [booked, setBooked] = useState<Booking[]>([]);
   const [bookedLoading, setBookedLoading] = useState(false);
   const loadBooked = useCallback(async () => {
+    if (sales) return;
     setBookedLoading(true);
     try {
       const r = await fetch(`/api/psc-delivery?booked=${encodeURIComponent(pickup)}&date=${date}`);
@@ -115,7 +118,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
       if (r.ok) setBooked(j.bookings ?? []);
     } catch { /* offline: keep what is shown */ }
     finally { setBookedLoading(false); }
-  }, [pickup, date]);
+  }, [pickup, date, sales]);
   useEffect(() => { setBooked([]); void loadBooked(); }, [loadBooked]);
   const [cancelling, setCancelling] = useState("");
   const [cancelError, setCancelError] = useState("");
@@ -135,7 +138,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
     }
   };
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(sales);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Customer[]>([]);
   const [searching, setSearching] = useState(false);
@@ -160,7 +163,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
     const ac = new AbortController();
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/psc-delivery?q=${encodeURIComponent(key)}&psc=${encodeURIComponent(pickup)}`, { signal: ac.signal });
+        const r = await fetch(`/api/psc-delivery?q=${encodeURIComponent(key)}&psc=${encodeURIComponent(pickup)}${sales ? "&sales=1" : ""}`, { signal: ac.signal });
         const j = await r.json();
         if (r.ok) seen.current.set(key, j.customers ?? []);
         setHits(j.customers ?? []);
@@ -168,7 +171,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
       finally { if (!ac.signal.aborted) setSearching(false); }
     }, 600);
     return () => { clearTimeout(t); ac.abort(); };
-  }, [q, pickup]);
+  }, [q, pickup, sales]);
 
   const set = (i: number, patch: Partial<Row>) => setRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const add = (c: Customer) => {
@@ -211,11 +214,11 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
         if (photos) {
           const ac = new AbortController();
           const t = setTimeout(() => ac.abort(), PHOTO_WAIT_MS);
-          res = await post({ pickup, deliveries }, ac.signal).catch(() => null);
+          res = await post({ pickup, deliveries, ...(sales ? { sales: 1 } : {}) }, ac.signal).catch(() => null);
           clearTimeout(t);
         }
         if (!res) {
-          res = await post({ pickup, deliveries: deliveries.map((d) => ({ ...d, files: [] })) });
+          res = await post({ pickup, deliveries: deliveries.map((d) => ({ ...d, files: [] })), ...(sales ? { sales: 1 } : {}) });
           if (photos && res.status === 409) res = new Response("{}", { status: 202 });
         }
         if (!res.ok) {
@@ -250,7 +253,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
     <div className="bg-white rounded-2xl shadow-sm p-4 mb-5 space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-[15px] font-bold text-slate-800">Đề nghị Giao kết quả / vật tư</h2>
-        <button aria-label="Đóng" onClick={() => { setOpen(false); setSent([]); }} className="p-2 -m-2 text-slate-500"><X className="w-5 h-5" /></button>
+        {!sales && <button aria-label="Đóng" onClick={() => { setOpen(false); setSent([]); }} className="p-2 -m-2 text-slate-500"><X className="w-5 h-5" /></button>}
       </div>
 
       {sent.length > 0 ? (<>
@@ -282,7 +285,7 @@ export function DeliveryBooking({ pickup, date }: { pickup: string; date: string
           ))}
         </ul>
       )}
-      {q.trim().length >= 3 && !searching && hits.length === 0 && <p className="text-xs text-slate-500">Không tìm thấy khách hàng giao mẫu về chi nhánh này.</p>}
+      {q.trim().length >= 3 && !searching && hits.length === 0 && <p className="text-xs text-slate-500">{sales ? "Không tìm thấy khách hàng của bạn nhận KQ/VT từ chi nhánh này." : "Không tìm thấy khách hàng giao mẫu về chi nhánh này."}</p>}
 
       {rows.map((r, i) => (
         <div key={r.c.customer_id} className="border border-slate-200 rounded-xl p-3 space-y-2">

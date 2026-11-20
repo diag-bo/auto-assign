@@ -15,6 +15,11 @@ export const SALES_COOKIE_MAX_AGE = TTL_MS / 1000;
 
 export type SalesUser = { email: string; name: string };
 
+/** Sign-ins that see and act on EVERY client, not only their own. Exact full
+ *  address: long.nguyen2@… (3, 4, …) are ordinary reps. */
+const SALES_ADMINS = new Set(["long.nguyen@diag.vn"]);
+export const isSalesAdmin = (email: string) => SALES_ADMINS.has(email.trim().toLowerCase());
+
 function hmac(body: string): string {
   const s = process.env.DRIVER_SESSION_SECRET || process.env.CARTRACK_WEB_PASS || "";
   return crypto.createHmac("sha256", s).update(body).digest("base64url");
@@ -51,11 +56,20 @@ export function salesByline(req: NextRequest): string {
 }
 
 /** Master client rows (one per Cartrack customer) matching a PostgREST filter that
- *  `email` owns or supervises. Owner/supervisor come from Labcenter via the morning
- *  sync, so a client reassigned today follows its new rep tomorrow. */
-export async function repClients(email: string, filter: string): Promise<{ customer_id: string; client_code: string | null }[]> {
-  const me = email.toLowerCase();
-  const rows = await sbSelect<{ customer_id: string; client_code: string | null; sales_email: string | null; supervisor_email: string | null }>(
-    "master_clients_read", `select=customer_id,client_code,sales_email,supervisor_email&${filter}`);
-  return rows.filter((r) => r.sales_email?.toLowerCase() === me || r.supervisor_email?.toLowerCase() === me);
+ *  `email` owns or supervises (every row for a SALES_ADMINS address). Owner and
+ *  supervisor come from Labcenter via the morning sync, so a client reassigned today
+ *  follows its new rep tomorrow. The database narrows by owner (ilike: Labcenter's
+ *  case is not trusted); the exact match is re-checked here, since `_` in an address
+ *  is a one-character wildcard to ilike. */
+export async function repClients<T extends object = object>(email: string, filter: string, select = "customer_id,client_code"):
+  Promise<(T & { customer_id: string; client_code: string | null })[]> {
+  const me = email.trim().toLowerCase();
+  if (!me || me.includes('"')) return [];
+  const admin = isSalesAdmin(me);
+  const rows = await sbSelect<T & { customer_id: string; client_code: string | null; sales_email: string | null; supervisor_email: string | null }>(
+    "master_clients_read",
+    `select=${select},sales_email,supervisor_email&${filter}` +
+      (admin ? "" : `&and=(or(sales_email.ilike.${encodeURIComponent(`"${me}"`)},supervisor_email.ilike.${encodeURIComponent(`"${me}"`)}))`) +
+      "&limit=5000");
+  return admin ? rows : rows.filter((r) => r.sales_email?.toLowerCase() === me || r.supervisor_email?.toLowerCase() === me);
 }
