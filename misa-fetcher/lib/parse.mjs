@@ -49,6 +49,31 @@ export function monthRange(now = new Date(), month = null, months = 1) {
   };
 }
 
+/**
+ * The two pay periods (15th → 14th) payroll can still touch: the running one and
+ * the one before it (paid on the 25th). Shifts are read and stored for exactly
+ * this; older rows stay as they were last written.
+ *
+ * Leave looks further ahead than pay does — a day off next month needs cover
+ * arranged now — so `leaveEnd` is the end of next month, and `years` covers both
+ * (the attendance endpoint filters by year). Same shape as monthRange.
+ * Independent of process.env.TZ.
+ */
+export function payPeriodRange(now = new Date()) {
+  const vn = new Date(now.getTime() + 7 * 3600_000);
+  const y = vn.getUTCFullYear(), m = vn.getUTCMonth() - (vn.getUTCDate() < 15 ? 1 : 0);
+  const start = Date.UTC(y, m - 1, 15), end = Date.UTC(y, m + 1, 14);
+  const leaveEnd = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth() + 2, 0);
+  const day = (t) => new Date(t).toISOString().slice(0, 10);
+  const years = [...new Set([start, end, leaveEnd].map((t) => new Date(t).getUTCFullYear()))];
+  return {
+    fromDate: new Date(start - 7 * 3600_000).toISOString(),       // VN midnight
+    toDate: new Date(end + 17 * 3600_000 - 1).toISOString(),      // VN 23:59:59.999
+    year: years[0], years, months: 2,
+    monthStart: day(start), monthEnd: day(end), leaveEnd: day(leaveEnd),
+  };
+}
+
 function isoDay(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

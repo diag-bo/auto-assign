@@ -31,7 +31,9 @@ export function misaMonths(month:string|null,now=new Date()) {
     return [month];
   }
   const [y,m]=vnDate(now).split("-").map(Number);
-  return [-2,-1,0,1].map(offset=>new Date(Date.UTC(y,m-1+offset,1)).toISOString().slice(0,7));
+  // Progress bookkeeping only: with no month asked for, the MISA step reads its own
+  // default (two pay periods of shifts, leave to the end of next month).
+  return [-1,0,1].map(offset=>new Date(Date.UTC(y,m-1+offset,1)).toISOString().slice(0,7));
 }
 export function syncWait(run:Run|null,now=Date.now()) {
   if(!run)return {running:false,wait:0};

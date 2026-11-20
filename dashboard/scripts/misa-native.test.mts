@@ -4,7 +4,7 @@ import { misaMonths, syncWait, getMisaSyncStatus} from '../src/lib/misa-sync';
 import { morningSyncDue, maybeMorningSync, morningResumeDue, shouldResume, morningRunFailure, MAX_SELF_CALLS } from '../src/lib/morning-sync-trigger';
 import { POST } from '../src/app/api/misa-sync/continue/route';
 import { GET } from '../src/app/api/morning-sync/route';
-assert.deepEqual(misaMonths(null,new Date('2026-12-31T18:00:00Z')),['2026-11','2026-12','2027-01','2027-02']);
+assert.deepEqual(misaMonths(null,new Date('2026-12-31T18:00:00Z')),['2026-12','2027-01','2027-02']);
 assert.deepEqual(misaMonths('2026-10'),['2026-10']);
 assert.throws(()=>misaMonths('2026-13'));assert.throws(()=>misaMonths('2026-10&host=evil'));
 const time=Date.parse('2026-10-07T00:00:00Z');

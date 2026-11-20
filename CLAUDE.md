@@ -148,9 +148,18 @@ the FIXED driver of their own branches during the hours they are covering —
 row is one candidate among several and would fire on nearly every substitute
 ever named, which is how a warning stops being read.
 
-- **A partly-approved request leaves rows behind.** Cancelling the rest in MISA
-  does not reach back into the app, so the engine keeps the driver off on days
-  they are working. `DELETE /api/leave-status` removes ONE record, identified the
+- **Leave MISA stops charging comes back off at the next sync** (2026-11-20; before
+  that a supervisor deleted each one by hand, a day at a time). After its push the
+  sync removes its OWN single-day rows (note `MISA auto…`, PT twin included) from
+  today on where MISA now charges that driver nothing that day —
+  `withdrawnMisaRows` in `leave-push.mjs`. A person's filing, a split row, a day
+  MISA still charges in any window, and a driver whose code no longer resolves are
+  never touched; more than `WITHDRAW_CAP` (15) in one run is read as a bad MISA
+  read and nothing goes. It is a plain delete, not the panel's: no tombstone, so a
+  day MISA charges again is simply written back.
+  `misa-fetcher/scripts/leave-withdraw.test.mjs`.
+- **A partly-approved request can still leave rows behind** where the sync cannot
+  see it (a hand-split row, a day MISA charges in another window). `DELETE /api/leave-status` removes ONE record, identified the
   way `editMasterLeaveSubs` identifies one (driver + `leave_from` + window, plus
   the leave id + revision — never a row number the dashboard is holding). Where
   several records answer to the same identity the UNCOVERED one goes first and the
@@ -591,6 +600,18 @@ These are the things most likely to burn a future agent working on this codebase
     `maybeMorningSync`). A failed or stalled run shows as a red line above the tabs
     (`/api/morning-issues` → `sync_failure`) and counts in the Cần xử lý badge.
     `scripts/misa-native.test.mts`.
+
+    Inside the MISA step (2026-11-20): LEAVE is read and written before shifts, so a
+    shift-page failure can no longer cost the morning's leave; every MISA page is
+    retried twice on a 5xx/429 (MISA throws the odd transient 500 — the
+    "HTTP 500 … null" red line that a re-run always cleared); shifts are read and
+    stored for the TWO pay periods payroll can still touch, 15th → 14th
+    (`payPeriodRange`; was 4 calendar months — older rows are left as they are),
+    while leave is still read to the end of next month. `replace_driver_shifts`
+    updates only rows whose values changed (2026-11-20; before that all ~14,000
+    were rewritten each morning — the 28/10 fix only parsed the payload once), so a
+    shift's `revision` / `synced_at` now mean "last changed by the sync".
+    `scripts/pay-period.test.mjs`, `dashboard/scripts/driver-shifts.test.sql`.
 
 See `docs/business-rules.md` for deeper detail, `docs/cartrack-api.md` for API reference,
 `docs/driver-tat.md` for the TAT module, and `docs/driver-pay.md` for part-time pay.

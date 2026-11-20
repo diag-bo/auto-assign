@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createSession, ensureLoggedIn, fetchOvertime, fetchAllShifts, fetchAllAttendance, fetchTimesheetList, fetchTimesheetDetail } from "./misa.mjs";
-import { monthRange, buildLeaveMap, parseShifts, pickTimesheets, parseTimesheetShifts } from "./parse.mjs";
+import { monthRange, payPeriodRange, buildLeaveMap, parseShifts, pickTimesheets, parseTimesheetShifts } from "./parse.mjs";
 import { pushSupabase, saveOvertimeSnapshot } from "./sinks.mjs";
 import {
   loadDrivers,
@@ -13,9 +13,9 @@ import {
   PT_PATTERN_SHEET,
 } from "./sheet-read.mjs";
 import { buildGrid } from "./grid.mjs";
-import { buildLeaveSubmissions, pushLeave } from "./leave-push.mjs";
+import { buildLeaveSubmissions, pushLeave, withdrawnMisaRows, knownLeaveAccounts, WITHDRAW_CAP } from "./leave-push.mjs";
 
-export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],statePath,outDir,writeDump=true,leaveOnFile}={}) {
+export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],statePath,outDir,writeDump=true,leaveOnFile,withdrawLeave}={}) {
   const args=new Set(flags),DRY_RUN=args.has("--dry-run");
   const STATE_PATH=statePath,OUT_DIR=outDir;
   if (!creds?.username || !creds.password || !creds.totpSecret) {
@@ -27,10 +27,11 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
   const monthsArg = argv.find((a) => a.startsWith("--months="));
   const offsetArg = argv.find((a) => a.startsWith("--start-offset="));
 
-  // Cover payroll retention (15th two months back) through the end of next month.
-  // The database clips historical rows at its exact payroll cutoff.
-  const span = monthsArg ? Number(monthsArg.split("=")[1]) : (month || monthArg ? 1 : 4);
-  const startOffset = offsetArg ? Number(offsetArg.split("=")[1]) : -2;
+  // Default: the two pay periods payroll can still touch (payPeriodRange). A
+  // month span only when asked for one (--month / --months / a dashboard month).
+  const explicit = month || monthArg || monthsArg || offsetArg;
+  const span = monthsArg ? Number(monthsArg.split("=")[1]) : 1;
+  const startOffset = offsetArg ? Number(offsetArg.split("=")[1]) : 0;
   const startMonth =
     month ?? monthArg?.split("=")[1] ??
     (() => {
@@ -38,11 +39,10 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
       const d = new Date(now.getFullYear(), now.getMonth() + startOffset, 1);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     })();
-
-  const range = monthRange(new Date(), startMonth, span);
-  console.log(
-    `[run] range ${range.monthStart} → ${range.monthEnd} (${range.months} month(s), VN)`,
-  );
+  const range = explicit ? monthRange(new Date(), startMonth, span) : payPeriodRange();
+  // Leave is read ahead to the end of next month whatever the shift range is.
+  const leaveRange = { ...range, monthEnd: range.leaveEnd ?? range.monthEnd };
+  console.log(`[run] shifts ${range.monthStart} → ${range.monthEnd}, leave to ${leaveRange.monthEnd} (VN)`);
 
   const drivers = await loadDrivers(); // Fail before MISA login or leave writes when Supabase is unavailable.
   const { browser, context, page } = await createSession({
@@ -60,7 +60,9 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
       catch (e) { console.warn(`[run] ⚠ overtime list not saved: ${e.message}`); }
     }
 
-    const shiftData = await fetchAllShifts(page, range);
+    // LEAVE FIRST. It is what the engine reads every cycle; shifts only feed pay
+    // and Lịch ca. Fetching 3 months of shifts first meant one bad MISA page there
+    // lost the morning's leave as well.
     // The attendance endpoint filters by year, so a span crossing Dec→Jan needs
     // one pass per year. Records are deduped on AttendanceID.
     const attendance = [];
@@ -73,6 +75,10 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
         attendance.push(a);
       }
     }
+    const byCode = driversByEmployeeCode(drivers);
+    const { leaveResult, submissions, unmatched, ptUnresolved } = await syncLeave({ attendance, byCode, drivers, range: leaveRange, args, DRY_RUN, leaveOnFile, withdrawLeave });
+
+    const shiftData = await fetchAllShifts(page, range);
     const leaveMap = buildLeaveMap(attendance);
     const parsed = parseShifts(shiftData, leaveMap, attendance);
     // Part-timers are rostered ONLY from their PT schedule (weekly pattern or a
@@ -131,7 +137,6 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
     // ~70 active part-timers have no MISA account, so their shifts live in the
     // sheet as a weekly pattern. Anyone already covered by MISA is skipped, so
     // a person in both sources is never rostered twice.
-    const byCode = driversByEmployeeCode(drivers);
     // Being in MISA is not the same as having a roster there: 30 of 88 people
     // have an AMIS account but no shift plan, so they arrive as a month of
     // blank days. Only someone who actually works a day in MISA is "covered" —
@@ -196,46 +201,6 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
           `add them to "${PT_PATTERN_SHEET}": ` +
           [...noRoster.entries()].map(([c, n]) => `${c} ${n}`).join("; "),
       );
-    }
-
-    // ── Leave → Nghỉ phép (the engine's source of truth) ────────────────
-    // `roster` is the whole Driver tab, not the code-keyed map: the part-time
-    // twin is found by NAME, and a twin need not carry an employee_code at all.
-    const { submissions, unmatched, ptUnresolved } = buildLeaveSubmissions(
-      attendance,
-      byCode,
-      range,
-      { roster: drivers },
-    );
-    if (unmatched.size) {
-      console.warn(
-        `[run] ⚠ ${unmatched.size} MISA employee(s) on leave have no active Cartrack driver — leave not pushed: ` +
-          [...unmatched.entries()].map(([c, n]) => `${c} ${n}`).join("; "),
-      );
-    }
-    // A name matching two part-time accounts is left alone rather than guessed
-    // at — but silently leaving it alone is how the twin keeps taking evening
-    // work on a day off, so say which people need looking at.
-    if (ptUnresolved.size) {
-      console.warn(
-        `[run] ⚠ ${ptUnresolved.size} người nghỉ có NHIỀU tài khoản PT trùng tên — chưa tạo dòng nghỉ PT: ` +
-          [...ptUnresolved.entries()].map(([c, n]) => `${c} ${n}`).join("; "),
-      );
-    }
-    const ptRows = submissions.filter((s) => s.pt_companion).length;
-    if (ptRows) console.log(`[run] leave: ${ptRows} dòng nghỉ PT kèm theo`);
-    let leaveResult = null;
-    if (!args.has("--no-leave") && submissions.length) {
-      leaveResult = await pushLeave(submissions, { dryRun: DRY_RUN || args.has("--leave-dry"), onFile: leaveOnFile });
-      if (!DRY_RUN && !args.has("--leave-dry")) {
-        console.log(
-          `[run] leave push: ${leaveResult.written} written, ${leaveResult.duplicate} already present, ` +
-            `${leaveResult.suppressed} suppressed (đã xoá thủ công), ${leaveResult.failed} failed` +
-            (leaveResult.aborted ? " — DỪNG SỚM: bảng nghỉ phép chưa đọc được" : ""),
-        );
-        for (const e of leaveResult.errors) console.error(`       ${e}`);
-        if(leaveResult.failed || leaveResult.aborted) throw new Error("MISA leave synchronization incomplete; retained existing shift data");
-      }
     }
 
     // ── Build outputs ───────────────────────────────────────────────────
@@ -308,6 +273,68 @@ export async function runMisaSync({creds,chromium,launchOptions,month,flags=[],s
   }
 }
 
+
+/**
+ * MISA leave → Nghỉ phép (the engine's source of truth), then the other way:
+ * days this sync filed earlier that MISA no longer charges are taken back off
+ * (withdrawnMisaRows). A failed push throws before the removal runs, so a run
+ * that could not write never deletes.
+ */
+async function syncLeave({ attendance, byCode, drivers, range, args, DRY_RUN, leaveOnFile, withdrawLeave }) {
+  // `roster` is the whole Driver tab, not the code-keyed map: the part-time
+  // twin is found by NAME, and a twin need not carry an employee_code at all.
+  const { submissions, unmatched, ptUnresolved } = buildLeaveSubmissions(attendance, byCode, range, { roster: drivers });
+  if (unmatched.size) {
+    console.warn(
+      `[run] ⚠ ${unmatched.size} MISA employee(s) on leave have no active Cartrack driver — leave not pushed: ` +
+        [...unmatched.entries()].map(([c, n]) => `${c} ${n}`).join("; "),
+    );
+  }
+  // A name matching two part-time accounts is left alone rather than guessed
+  // at — but silently leaving it alone is how the twin keeps taking evening
+  // work on a day off, so say which people need looking at.
+  if (ptUnresolved.size) {
+    console.warn(
+      `[run] ⚠ ${ptUnresolved.size} người nghỉ có NHIỀU tài khoản PT trùng tên — chưa tạo dòng nghỉ PT: ` +
+        [...ptUnresolved.entries()].map(([c, n]) => `${c} ${n}`).join("; "),
+    );
+  }
+  const ptRows = submissions.filter((s) => s.pt_companion).length;
+  if (ptRows) console.log(`[run] leave: ${ptRows} dòng nghỉ PT kèm theo`);
+  const writing = !args.has("--no-leave") && !DRY_RUN && !args.has("--leave-dry");
+  let leaveResult = null;
+  if (!args.has("--no-leave") && submissions.length) {
+    leaveResult = await pushLeave(submissions, { dryRun: !writing, onFile: leaveOnFile });
+    if (writing) {
+      console.log(
+        `[run] leave push: ${leaveResult.written} written, ${leaveResult.duplicate} already present, ` +
+          `${leaveResult.suppressed} suppressed (đã xoá thủ công), ${leaveResult.failed} failed` +
+          (leaveResult.aborted ? " — DỪNG SỚM: bảng nghỉ phép chưa đọc được" : ""),
+      );
+      for (const e of leaveResult.errors) console.error(`       ${e}`);
+      if(leaveResult.failed || leaveResult.aborted) throw new Error("MISA leave synchronization incomplete; retained existing shift data");
+    }
+  }
+
+  // An empty read cannot tell "nobody is on leave" from "MISA said nothing".
+  if (writing && withdrawLeave && attendance.length) {
+    try {
+      const rows = await withdrawLeave.list();
+      const gone = withdrawnMisaRows(rows, submissions, { to: range.monthEnd, known: knownLeaveAccounts(byCode, drivers) });
+      const label = (r) => `${r.leave_from} ${r.driver_name || r.driver_id}`;
+      if (gone.length > WITHDRAW_CAP) {
+        console.warn(`[run] ⚠ ${gone.length} ngày nghỉ không còn trong MISA — quá nhiều, KHÔNG xoá (kiểm tra tay): ${gone.slice(0, 5).map(label).join("; ")}…`);
+      } else if (gone.length) {
+        await withdrawLeave.remove(gone);
+        console.log(`[run] leave: xoá ${gone.length} ngày MISA đã huỷ: ${gone.map(label).join("; ")}`);
+      }
+    } catch (e) {
+      // Never the reason the sync fails: the day stays, as it did before this existed.
+      console.warn(`[run] ⚠ leave withdrawal check skipped: ${e.message}`);
+    }
+  }
+  return { leaveResult, submissions, unmatched, ptUnresolved };
+}
 
 /** Log in and read the overtime requests waiting for approval. Read only. */
 export async function readPendingOvertime({ creds, chromium, launchOptions, statePath } = {}) {

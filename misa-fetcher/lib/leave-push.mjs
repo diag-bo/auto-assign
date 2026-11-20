@@ -246,6 +246,54 @@ export function buildLeaveSubmissions(
   return { submissions: subs, unmatched, ptUnresolved };
 }
 
+/** Today in VN whatever the process timezone (Vercel runs UTC, where todayVn()
+ *  still reads yesterday at 05:00 VN). */
+export function vnToday(now = Date.now()) {
+  return new Date(now + 7 * 3600_000).toISOString().slice(0, 10);
+}
+
+/** More than this many withdrawn days in one run is read as a bad MISA read, not
+ *  a wave of cancellations: nothing is removed and the run says so. */
+export const WITHDRAW_CAP = 15;
+
+/**
+ * Leave this sync wrote earlier that MISA no longer charges, i.e. the request was
+ * cancelled, rejected or deleted in MISA after the day was filed.
+ *
+ * Deliberately narrow, because a wrong answer puts an absent driver on the road:
+ *   - only rows the sync itself wrote (note starts "MISA auto", the PT twin's
+ *     included); a person's filing, a split or edited row is never touched;
+ *   - only single-day rows from today (VN) to `to`, the same days the pusher
+ *     re-derives, so a past day and a day beyond the read are left alone;
+ *   - kept while MISA charges that driver ANYTHING that day. A window that moved
+ *     (morning → afternoon) keeps the old row rather than guessing which is right;
+ *   - only drivers in `known` (the accounts this run could have written for). A
+ *     driver whose staff code no longer matches is unseen, not "charged nothing".
+ *
+ * `rows`: {id, revision, note, driver_id, leave_from, leave_to}. `submissions`:
+ * buildLeaveSubmissions' output from the same run, twin rows included.
+ */
+export function withdrawnMisaRows(rows, submissions, { to, known, today = vnToday() }) {
+  const charged = new Set(submissions.map((s) => `${s.driver_id}|${s.date}`));
+  return rows.filter((r) => {
+    const day = r.leave_from;
+    return /^MISA auto/.test(r.note || "") && known.has(r.driver_id) && day && (!r.leave_to || r.leave_to === day) &&
+      day >= today && day <= to && !charged.has(`${r.driver_id}|${day}`);
+  });
+}
+
+/** The accounts a run can write leave for: every driver MISA's codes resolve to,
+ *  plus each one's part-time twin. */
+export function knownLeaveAccounts(driversByCode, roster) {
+  const known = new Set();
+  for (const d of driversByCode.values()) {
+    known.add(d.driver_id);
+    const { twin } = findPtTwin(d, roster);
+    if (twin) known.add(twin.driver_id);
+  }
+  return known;
+}
+
 /**
  * Send the submissions. A 409 means the leave is already on the sheet — that is
  * the expected steady state on re-runs, not an error. A 503 means the dashboard

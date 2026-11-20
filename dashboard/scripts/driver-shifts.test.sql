@@ -1,6 +1,6 @@
 begin;
 do $$
-declare r public.driver_shifts; result public.driver_shifts; data jsonb; day date:=current_date+90; n integer;
+declare r public.driver_shifts; result public.driver_shifts; data jsonb; day date:=current_date+90; n integer; rev bigint;
 begin
  select * into r from public.driver_shifts s where driver_id is not null and exists(select 1 from public.master_drivers d where d.driver_id=s.driver_id and d.is_active) order by shift_date desc limit 1;
  if r.driver_id is null then raise exception 'Test requires one active imported driver'; end if;
@@ -16,11 +16,15 @@ begin
  if not exists(select 1 from public.driver_shifts where employee_code=r.employee_code and shift_date=day and slot=20 and end_time='20:00') then raise exception 'Failed replacement lost prior data';end if;
  n:=public.replace_driver_shifts(day,day,jsonb_build_array(data||jsonb_build_object('source','MISA','end_time','21:00')));
  if n<>1 then raise exception 'Source refresh did not replace its row';end if;
+ -- The same values again change nothing: no write, no revision bump.
+ rev:=(select revision from public.driver_shifts where employee_code=r.employee_code and shift_date=day and slot=20);
+ n:=public.replace_driver_shifts(day,day,jsonb_build_array(data||jsonb_build_object('source','MISA','end_time','21:00')));
+ if n<>0 or (select revision from public.driver_shifts where employee_code=r.employee_code and shift_date=day and slot=20)<>rev then raise exception 'Unchanged row was rewritten';end if;
  begin perform public.master_write_shift(data||jsonb_build_object('revision',result.revision));raise exception 'Pre-refresh revision accepted';exception when others then if sqlerrm='Pre-refresh revision accepted' then raise;end if;end;
  begin perform public.replace_driver_shifts(day,day,null);raise exception 'NULL replacement accepted';exception when others then if sqlerrm='NULL replacement accepted' then raise;end if;end;
  begin perform public.master_write_shift_pattern('{}'::jsonb);raise exception 'Missing pattern days accepted';exception when others then if sqlerrm='Missing pattern days accepted' then raise;end if;end;
  begin perform public.replace_driver_shifts(day,day,'[]'::jsonb);raise exception 'Empty replacement accepted';exception when others then if sqlerrm='Empty replacement accepted' then raise;end if;end;
  begin perform public.master_write_shift(data||jsonb_build_object('shift_date',public.cartrack_history_cutoff()-1));raise exception 'Pre-cutoff date accepted';exception when others then if sqlerrm='Pre-cutoff date accepted' then raise;end if;end;
- raise notice 'PASS: future writes, stale edits, manual preservation, atomic failures and payroll cutoff';
+ raise notice 'PASS: future writes, stale edits, manual preservation, unchanged rows skipped, atomic failures and payroll cutoff';
 end $$;
 rollback;

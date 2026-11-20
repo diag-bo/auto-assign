@@ -9,6 +9,7 @@ import { chromium } from "playwright-core";
 import { authenticator } from "otplib";
 import { runMisaSync, readPendingOvertime } from "../../../misa-fetcher/lib/run.mjs";
 import { findLeaveConflict, loadLeaveEntriesStrict } from "./leave-config";
+import { deleteMasterLeaves, masterLeaveRows } from "./master-leave";
 
 type LeaveSub = { driver_id: string; driver_name: string; loai_nghi: string; ngay_bat_dau: string;
   ngay_ket_thuc: string | null; gio_bat_dau: string | null; gio_ket_thuc: string | null };
@@ -27,6 +28,18 @@ async function leaveOnFile() {
   }, entries, invalid);
 }
 
+type WithdrawRow = { id: number; revision: number; note: string; driver_id: string | null;
+  driver_name: string; leave_from: string | null; leave_to: string | null };
+/** Days the sync filed that MISA has since dropped come back off through here.
+ *  A plain delete, NOT the leave panel's: that one records a "deleted day" that
+ *  would stop the sync putting the day back if MISA charges it again. */
+const withdrawLeave = {
+  list: async (): Promise<WithdrawRow[]> => (await masterLeaveRows()).map((r) => ({ id: r.id, revision: r.revision,
+    note: r.row_data.note ?? "", driver_id: r.linked_driver_id, driver_name: r.row_data.driver ?? "",
+    leave_from: r.starts_on, leave_to: r.ends_on })),
+  remove: (rows: WithdrawRow[]) => deleteMasterLeaves(rows.map((r) => r.id), new Map(rows.map((r) => [r.id, r.revision]))),
+};
+
 // MISA_CHROMIUM_PATH: a local Chrome for `npm run dev` on Windows/macOS, where the
 // Linux server build cannot run. Unset on Vercel.
 const browserOptions = async () => ({chromium,statePath:"/tmp/misa-session.json",
@@ -35,8 +48,10 @@ const browserOptions = async () => ({chromium,statePath:"/tmp/misa-session.json"
   creds:{username:process.env.MISA_USERNAME,password:process.env.MISA_PASSWORD,totpSecret:process.env.MISA_TOTP_SECRET,
     generateTotp:()=>authenticator.generate(process.env.MISA_TOTP_SECRET!)}});
 
-const run = async (months: string[]) => runMisaSync({...await browserOptions(),month:months[0],flags:[`--months=${months.length}`],
-  writeDump:false,leaveOnFile});
+// One month asked for by name (the dashboard's ?month=) reads that month; the
+// morning run takes runMisaSync's default, the two open pay periods.
+const run = async (months: string[]) => runMisaSync({...await browserOptions(),...(months.length===1?{month:months[0]}:{}),
+  writeDump:false,leaveOnFile,withdrawLeave});
 
 /** Overtime requests waiting for approval in MISA (read only). */
 export async function readMisaOvertime() {

@@ -78,8 +78,22 @@ async function landOnStaticPage(page) {
   await landOnOrigin(page, "/robots.txt");
 }
 
+/** Waits before each retry of a MISA 5xx/429. MISA answers the odd page with a
+ *  500 that is fine a moment later, and one such page used to fail the whole
+ *  morning run ("HTTP 500: …null…" on the dashboard, gone on a re-run). */
+const RETRY_WAITS_MS = [3000, 10000];
+
 /** Run a fetch inside the page so the browser attaches cookies + fingerprint. */
-async function pageFetch(page, url, { method = "GET", body } = {}) {
+async function pageFetch(page, url, opts = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const resp = await pageFetchOnce(page, url, opts);
+    if ((resp.status < 500 && resp.status !== 429) || attempt >= RETRY_WAITS_MS.length) return resp;
+    log(`HTTP ${resp.status} from ${new URL(url).pathname} — retry in ${RETRY_WAITS_MS[attempt] / 1000}s`);
+    await page.waitForTimeout(RETRY_WAITS_MS[attempt]);
+  }
+}
+
+async function pageFetchOnce(page, url, { method = "GET", body } = {}) {
   const result = await page.evaluate(
     async ({ url, method, body }) => {
       const headers = { Accept: "application/json, text/plain, */*" };
