@@ -6,6 +6,7 @@ import {
   HELP,
   parseCommand,
   buildStatsReply,
+  buildDoctorsReply,
   botToken,
   allowedChats,
   isChatAllowed,
@@ -188,14 +189,14 @@ export async function POST(req: NextRequest) {
     reply = `Chat ID: ${chatId}`;
   } else {
     try {
-      reply = await buildStatsReply(cmd.date);
+      reply = cmd.kind === "doctors" ? await buildDoctorsReply() : await buildStatsReply(cmd.date);
     } catch (e) {
       // A stale session token is the expected failure here — name it plainly in
       // chat rather than reporting 0đ, which would read as a real (bad) sales day.
       reply =
         e instanceof KiotAuthError
           ? `🔑 Không lấy được số liệu: ${e.message}\nCần cập nhật thông tin đăng nhập KiotViet.`
-          : "⚠️ Lỗi khi lấy số liệu từ KiotViet. Thử lại sau ít phút.";
+          : `⚠️ Lỗi khi lấy số liệu từ ${cmd.kind === "doctors" ? "KiotViet/Sapoche" : "KiotViet"}. Thử lại sau ít phút.`;
       console.error("[zalo-webhook] stats failed", e);
     }
   }

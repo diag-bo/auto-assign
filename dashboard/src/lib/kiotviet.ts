@@ -65,36 +65,47 @@ function monthToDateRange(date: string, untilClock?: string): Range {
   };
 }
 
-/** Sales stats via the internal dashboard endpoint the KiotViet web UI itself calls.
- *  One request, server-side aggregates already computed. Requires a session JWT. */
-async function statsFromSession(token: string, range: Range): Promise<SalesStats> {
-  const filter =
-    `(BranchId eq ${BRANCH_ID} and (Status eq 1 or Status eq 3) and ` +
-    `(PurchaseDate ge datetime'${range.from}' and PurchaseDate lt datetime'${range.to}'))`;
+/** Headers the KiotViet web UI sends with its session JWT. */
+function kiotHeaders(token: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token}`,
+    Retailer: RETAILER,
+    "X-RETAILER-CODE": RETAILER,
+    "X-GROUP-ID": GROUP_ID,
+    BranchId: String(BRANCH_ID),
+    "X-Language": "vi-VN",
+    IsUseKvClient: "1",
+    Referer: `https://${RETAILER}.kiotviet.vn/`,
+    Accept: "application/json, text/plain, */*",
+  };
+}
 
-  const res = await fetch(
-    `${INTERNAL_API_URL}/api/invoices/dashboard?${new URLSearchParams({ $filter: filter })}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Retailer: RETAILER,
-        "X-RETAILER-CODE": RETAILER,
-        "X-GROUP-ID": GROUP_ID,
-        BranchId: String(BRANCH_ID),
-        "X-Language": "vi-VN",
-        IsUseKvClient: "1",
-        Referer: `https://${RETAILER}.kiotviet.vn/`,
-        Accept: "application/json, text/plain, */*",
-      },
-    }
-  );
-
+async function assertKiotOk(res: Response): Promise<void> {
   if (res.status === 401 || res.status === 403) {
     throw new KiotAuthError("Session token hết hạn hoặc không hợp lệ.");
   }
   if (!res.ok) {
     throw new Error(`KiotViet ${res.status}: ${await res.text().catch(() => "")}`);
   }
+}
+
+/** Completed + in-progress invoices of the branch inside a half-open window — the
+ *  same filter for the dashboard totals and the invoice list. */
+function invoiceFilter(range: Range): string {
+  return (
+    `(BranchId eq ${BRANCH_ID} and (Status eq 1 or Status eq 3) and ` +
+    `(PurchaseDate ge datetime'${range.from}' and PurchaseDate lt datetime'${range.to}'))`
+  );
+}
+
+/** Sales stats via the internal dashboard endpoint the KiotViet web UI itself calls.
+ *  One request, server-side aggregates already computed. Requires a session JWT. */
+async function statsFromSession(token: string, range: Range): Promise<SalesStats> {
+  const res = await fetch(
+    `${INTERNAL_API_URL}/api/invoices/dashboard?${new URLSearchParams({ $filter: invoiceFilter(range) })}`,
+    { headers: kiotHeaders(token) }
+  );
+  await assertKiotOk(res);
 
   const json = (await res.json()) as { Total1Value?: number; Total?: number };
   return {
@@ -249,10 +260,49 @@ export async function getMonthToDateStats(
 }
 
 async function statsForRange(range: Range): Promise<SalesStats> {
+  return withSession((token) => statsFromSession(token, range));
+}
+
+export interface KiotInvoice {
+  code: string;      // HD000536
+  orderCode: string; // DH000534; "" for a sale rung up straight at the counter
+  total: number;     // NewInvoiceTotal, đồng
+}
+
+/** Every invoice of the month containing `date`, cut where getMonthToDateStats cuts,
+ *  so a per-doctor split adds up to the month's revenue. */
+export async function getMonthToDateInvoices(
+  date: string = vnDate(),
+  untilClock?: string
+): Promise<KiotInvoice[]> {
+  const filter = invoiceFilter(monthToDateRange(date, untilClock));
+  return withSession(async (token) => {
+    const out: KiotInvoice[] = [];
+    for (let skip = 0; ; skip += 100) {
+      // Includes=Order is what fills OrderCode; without it the field comes back blank.
+      const res = await fetch(`${INTERNAL_API_URL}/api/invoices/list?format=json&Includes=Order`, {
+        method: "POST",
+        headers: { ...kiotHeaders(token), "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ $inlinecount: "allpages", $format: "json", $top: 100, $skip: skip, $filter: filter }),
+      });
+      await assertKiotOk(res);
+      const json = (await res.json()) as {
+        Data?: { Id: number; Code: string; OrderCode?: string; NewInvoiceTotal?: number }[];
+      };
+      // Id -1 is the summary row KiotViet puts at the top of every page.
+      const rows = (json.Data ?? []).filter((d) => d.Id > 0);
+      out.push(...rows.map((d) => ({ code: d.Code, orderCode: d.OrderCode ?? "", total: d.NewInvoiceTotal ?? 0 })));
+      if (rows.length < 100) return out;
+    }
+  });
+}
+
+/** Run a KiotViet call with a session token, logging in again once if it was refused. */
+async function withSession<T>(call: (token: string) => Promise<T>): Promise<T> {
   const sessionToken = await getSessionToken();
   if (sessionToken) {
     try {
-      return await statsFromSession(sessionToken, range);
+      return await call(sessionToken);
     } catch (e) {
       // A cached token can be dead before its `exp` — logging out elsewhere kills the
       // session server-side. Drop it and log in once more before giving up.
@@ -263,7 +313,7 @@ async function statsForRange(range: Range): Promise<SalesStats> {
       await getRedis()?.del(SESSION_KEY);
       const retry = await getSessionToken();
       if (!retry) throw e;
-      return statsFromSession(retry, range);
+      return call(retry);
     }
   }
 

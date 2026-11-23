@@ -1,5 +1,6 @@
 import { getSalesStats, getMonthToDateStats, formatVnd, formatVnDate } from "./kiotviet";
 import { vnDate, addDays, vnHoursMinutes } from "./time";
+import { getDoctorRevenueMtd } from "./pharmacy-doctors";
 
 // ── Shared config readers ────────────────────────────────────────────────────
 
@@ -76,12 +77,14 @@ export const HELP = [
   "• doanh thu — số liệu hôm nay",
   "• hôm qua — số liệu hôm qua",
   "• 30/07 hoặc 2026-07-30 — theo ngày",
+  "• bacsi — doanh thu tháng này theo bác sĩ kê đơn",
   "• id — xem chat id của nhóm này",
 ].join("\n");
 
 /** Each intent is its own member so `cmd.kind` narrows at the call site. */
 export type Command =
   | { kind: "stats"; date: string }
+  | { kind: "doctors" }
   | { kind: "help" }
   | { kind: "id" }
   | { kind: "ignore" };
@@ -116,6 +119,8 @@ export function parseCommand(raw: string, today: string = vnDate()): Command {
   if (!t) return { kind: "ignore" };
   if (t === "id" || t === "chatid") return { kind: "id" };
   if (t === "help" || t === "start" || t === "?") return { kind: "help" };
+  // The whole message, optionally after an @mention of the bot: "bacsi", "bác sĩ".
+  if (/^(?:@.*\s)?bac ?si$/.test(t)) return { kind: "doctors" };
 
   const isYesterday = (s: string) => s === "hom qua" || s === "homqua" || s === "yesterday";
   const isToday = (s: string) => s === "hom nay" || s === "homnay" || s === "today" || s === "dt";
@@ -285,6 +290,23 @@ async function buildReport(date: string, headline: string): Promise<string> {
 export async function buildDailyPushReply(): Promise<string> {
   const today = vnDate();
   return buildReport(today, `Doanh thu ${formatVnDate(today)} (tính đến ${vnClock()})`);
+}
+
+/** Month-to-date revenue per prescribing doctor ("bacsi"). */
+export async function buildDoctorsReply(): Promise<string> {
+  const r = await getDoctorRevenueMtd();
+  const n = (x: number) => x.toLocaleString("vi-VN");
+  const lines = [
+    `👨‍⚕️ **Doanh thu theo bác sĩ tháng ${r.month.slice(5)}/${r.month.slice(0, 4)}** (đến ${vnClock()} ${formatVnDate(vnDate()).slice(0, 5)})`,
+    "",
+    ...r.doctors.map((d, i) => `${i + 1}. ${d.name}: **${formatVnd(d.revenue)}** (${n(d.invoices)} đơn)`),
+  ];
+  if (r.doctors.length === 0) lines.push("Chưa có đơn thuốc nào gắn với bác sĩ.");
+  if (r.unlinked.invoices > 0) {
+    lines.push(`➖ Không có đơn bác sĩ: ${formatVnd(r.unlinked.revenue)} (${n(r.unlinked.invoices)} đơn)`);
+  }
+  lines.push("", `💰 Tổng: **${formatVnd(r.total)}** (${n(r.invoices)} đơn)`);
+  return lines.join("\n");
 }
 
 /** The message body for a stats request. */
