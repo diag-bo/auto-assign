@@ -659,11 +659,19 @@ const fmtPhone = (p: string) => p.replace(/^(\d{4})(\d{3})(\d{3})$/, "$1 $2 $3")
 /** The D001 receivers, whoever is on now first and marked: call, or copy the number
  *  into the Grab app. */
 function D001Receivers() {
-  // Read once when shown: who is on duty does not need to tick while the sheet is open.
-  const [now] = useState(() => {
+  // Re-read on returning to the tab: branches keep /qr open all day, and a clock read
+  // once at open kept the morning receiver marked through the evening. Local clock only.
+  const readNow = () => {
     const vn = new Date(Date.now() + 7 * 3_600_000);
     return { day: vn.getUTCDay(), hour: vn.getUTCHours() + vn.getUTCMinutes() / 60 };
-  });
+  };
+  const [now, setNow] = useState(readNow);
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === "visible") setNow(readNow()); };
+    tick(); // the static shell was prerendered at deploy time
+    document.addEventListener("visibilitychange", tick);
+    return () => document.removeEventListener("visibilitychange", tick);
+  }, []);
   const [copied, setCopied] = useState("");
   const copy = async (phone: string) => {
     try { await navigator.clipboard.writeText(phone); setCopied(phone); setTimeout(() => setCopied(""), 2000); } catch {}
