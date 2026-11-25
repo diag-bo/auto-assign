@@ -1385,6 +1385,13 @@ async function preassignDueUnassignedScheduleJobs(
   return done;
 }
 
+/** A Lịch cố định job made for a day before `dateVn` — read off its reference
+ *  (`<ref>_YYYY-MM-DD`, the day it was created for), which Cartrack never re-stamps. */
+export function isPastDayScheduleJob(job: Job, dateVn: string): boolean {
+  const day = /_(\d{4}-\d{2}-\d{2})$/.exec(job.reference_number ?? "")?.[1];
+  return isScheduleJob(job) && !!day && day < dateVn;
+}
+
 /**
  * Release parked jobs from the proxy driver whose send_to_driver_at has passed.
  * Sets each job back to unassigned so the assign cycle picks it up.
@@ -1425,7 +1432,15 @@ export async function releaseDueProxyJobs(
     // list was fetched with — otherwise a repair whose time has already passed
     // waits a whole extra cycle for no reason.
     const sendAt = repaired.get(job.job_id) ?? parseSendToDriverAt(job.send_to_driver_at);
-    return sendAt !== null && sendAt.getTime() <= now;
+    if (sendAt === null || sendAt.getTime() > now) return false;
+    // A Lịch cố định trip from an EARLIER day missed its release (engine off): sending
+    // it now asks a driver for a pickup that was due yesterday — on 25/11 the 07:48
+    // sweep let go 24/11's An Sinh and Raffles trips. It stays parked for a human.
+    if (isPastDayScheduleJob(job, dateVn)) {
+      log(`Job ${job.job_id} - Lịch cố định ${job.reference_number} not released: its day has passed — still on the queue driver, cancel it by hand`, "WARN");
+      return false;
+    }
+    return true;
   });
   const preassign = await loadDuePreassignments(due, log);
   // Release concurrently (bounded 10) — each unassign is independent.
