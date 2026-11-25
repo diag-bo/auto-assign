@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assignJob, getJobDetailsFast, type Env } from "@/lib/cartrack";
 import { JOB_STATUS } from "@/lib/job-filters";
+import { loadDrivers } from "@/lib/config";
+import { pushRunLog } from "@/lib/smart-log-kv";
+import { vnTimestamp } from "@/lib/time";
 
 /**
  * POST /api/admin/assign
@@ -15,10 +18,11 @@ import { JOB_STATUS } from "@/lib/job-filters";
 export async function POST(req: NextRequest) {
   try {
     const reqBody = await req.json();
-    const { job_id, driver_id, env = "prod" } = reqBody as {
+    const { job_id, driver_id, env = "prod", by = "" } = reqBody as {
       job_id?: number;
       driver_id?: string;
       env?: Env;
+      by?: string;
     };
 
     if (!job_id || !driver_id) {
@@ -49,6 +53,20 @@ export async function POST(req: NextRequest) {
         },
         { status }
       );
+    }
+
+    // Cartrack records this exactly like an engine assign (an API call, no name), so
+    // without this line a hand-assign is indistinguishable from the engine's
+    // (job 34544397, 25/11: no way to tell who gave it to Minh Trung).
+    if (env === "prod") {
+      const driverName = (await loadDrivers().catch(() => [])).find((d) => d.driver_id === driver_id)?.name ?? driver_id;
+      const stop = (t: number) => job.stops?.find((s: { stop_type_id?: number }) => s.stop_type_id === t)?.customer_name ?? "—";
+      const who = String(by).trim().slice(0, 60) || "?";
+      await pushRunLog([{
+        ts: vnTimestamp(),
+        level: "OK",
+        msg: `Job ${job_id} - Gán thủ công cho ${driverName} (bởi ${who}) | ${stop(1)} → ${stop(2)}`,
+      }]).catch(() => {});
     }
 
     return NextResponse.json({

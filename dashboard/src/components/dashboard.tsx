@@ -292,7 +292,7 @@ export function Dashboard() {
       const res = await fetch("/api/admin/assign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, driver_id: driverId, env }),
+        body: JSON.stringify({ job_id: jobId, driver_id: driverId, env, by: localStorage.getItem("dashboard:admin_name") ?? "" }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw Object.assign(new Error(data.error ?? `HTTP ${res.status}`), { closed: res.status === 409 });
