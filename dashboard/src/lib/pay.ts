@@ -254,6 +254,7 @@ export interface DayFacts {
 export const HOLIDAY_MULTIPLIER: Record<string, number> = {
   "2026-09-01": 3,
   "2026-09-02": 3,
+  "2026-11-24": 3,
 };
 
 export interface WorkedDay {
