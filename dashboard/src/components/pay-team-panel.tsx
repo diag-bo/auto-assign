@@ -59,7 +59,7 @@ interface PayTeamReport {
   to: string;
   rates: { per_hour: number; per_km: number };
   driver_count: number;
-  coverage: { expected_days: number; missing_days: string[]; period_closed: boolean; shifts_imported: boolean; pending_corrections: number; ready: boolean };
+  coverage: { expected_days: number; missing_days: string[]; period_closed: boolean; shifts_imported: boolean; pending_corrections: number; pending_later?: number; ready: boolean };
   totals: Omit<DriverRow, "driver_id" | "driver_name">;
   no_shift?: NoShiftDay[];
   suspects?: SuspectDay[];
@@ -634,7 +634,7 @@ export function PayTeamPanel() {
             {([
               ["noshift", "Không ca", data.totals.no_shift_days, "bg-amber-700"],
               ["suspect", "Nghi vấn", data.totals.suspect_days, "bg-rose-600"],
-              ["corrections", "Cập nhật công", data.coverage.pending_corrections, "bg-amber-700"],
+              ["corrections", "Cập nhật công", data.coverage.pending_corrections + (data.coverage.pending_later ?? 0), "bg-amber-700"],
             ] as [PayView, string, number, string][]).map(([id, label, count, badge]) => (
               <button
                 key={id}

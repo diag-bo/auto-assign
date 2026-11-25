@@ -26,7 +26,7 @@ import { sbSelectAll, supabaseConfigured } from "@/lib/supabase-rest";
 import { masterDriverNames } from "@/lib/master-store";
 import { employmentOf } from "@/lib/driver-label";
 import { paidDay, hoursPayFor, kmPayFor, suggestedWindow, RATE_PER_HOUR_VND, RATE_PER_KM_VND, type PayPunch, type PayJob, hourPayFor, BO_RATE_PER_HOUR_VND, dayParts, type DayPart, lateStartMins, LATE_START_FLAG_MIN, tripOverMins, AFTER_OUT_MIN } from "@/lib/pay";
-import { payrollPeriod } from "@/lib/pay-period";
+import { payrollPeriod, runningPayMonth } from "@/lib/pay-period";
 import { staffCode } from "@/lib/display-names";
 import { loadPayDayInputs, dayKey } from "@/lib/pay-days";
 import { vnDate, addDays } from "@/lib/time";
@@ -171,6 +171,14 @@ export async function GET(req: NextRequest) {
     const geofenceDays = new Set(geofence.filter((g) => g.driver_id).map((g) => dayKey(g.driver_id!, vnDate(new Date(g.occurred_at)))));
     const shiftsImported = inputs.payrollImported;
     const pendingCorrections = inputs.corrections.filter((c) => c.status === "pending").length;
+    // Pending requests of the running period while this page shows an earlier
+    // one — the Cập nhật công list shows them too, so the badge counts them.
+    const running = runningPayMonth(today);
+    const later = month < running ? payrollPeriod(running) : null;
+    const pendingLater = later
+      ? (await sbSelectAll<{ id: number }>("pay_day_corrections",
+          `select=id&status=eq.pending&trip_date=gte.${later.from}&trip_date=lte.${later.to}`, "id.asc")).length
+      : 0;
     const realKm = new Map<string, number>();
     for (const r of legsDaily) realKm.set(r.driver_id, (realKm.get(r.driver_id) ?? 0) + num(r.total_km));
 
@@ -371,6 +379,9 @@ export async function GET(req: NextRequest) {
         shifts_imported: shiftsImported,
         /** "Cập nhật công" requests waiting for a decision — approval needs none. */
         pending_corrections: pendingCorrections,
+        /** Pending requests of the running period, when this is an earlier one.
+         *  Not part of `ready`: they are not this period's pay. */
+        pending_later: pendingLater,
         // Approval needs every day of a finished period in, the shifts imported,
         // and every job priced.
         ready: periodClosed && pendingCorrections === 0 && missingDays.length === 0 && drivers.every((d) => d.unpriced_jobs === 0),

@@ -18,6 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, AlertCircle, AlertTriangle, Check, X, Plus, ImageOff } from "lucide-react";
+import { runningPayMonth } from "@/lib/pay-period";
 import { REASON_LABEL } from "@/lib/pay-corrections";
 
 interface Correction {
@@ -293,10 +294,18 @@ export function PayCorrectionsPanel({
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch(`/api/pay/corrections?month=${month}`);
-      const j = await res.json();
-      if (!res.ok || !j.ok) { setError(j.error ?? "Không tải được."); return; }
-      setRows(j.corrections);
+      // From the 15th to the 25th the page sits on the period being paid, but
+      // drivers are already asking about days of the running one — list those
+      // pending requests too, or they wait unseen until the page rolls over.
+      const running = runningPayMonth(new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date()));
+      const months = month < running ? [month, running] : [month];
+      const res = await Promise.all(months.map((m) => fetch(`/api/pay/corrections?month=${m}`).then(async (r) => ({ r, j: await r.json() }))));
+      const bad = res.find(({ r, j }) => !r.ok || !j.ok);
+      if (bad) { setError(bad.j.error ?? "Không tải được."); return; }
+      setRows([
+        ...(res[1]?.j.corrections ?? []).filter((c: Correction) => c.status === "pending"),
+        ...res[0].j.corrections,
+      ]);
     } catch { setError("Không kết nối được máy chủ."); }
   }, [month]);
   useEffect(() => { load(); }, [load]);
