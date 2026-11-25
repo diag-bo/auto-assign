@@ -197,6 +197,25 @@ try {
   assert.ok(events.includes("preassign:301"));
   assert.equal(sends.length, beforePreassign + 1, "direct preassignment also sends one reminder");
   assert.ok(events.indexOf("preassign:301") < events.lastIndexOf(`send:${chat}`));
+  // A job left parked while the engine was off is released the next morning: its
+  // pickup time is gone, so no "sắp đến" (25/11: 24/11's 10:20 An Sinh at 07:48).
+  const { pickupTimePassed } = await import("../src/lib/scheduled-pickup-reminder");
+  const morning = new Date("2026-11-25T07:48:00+07:00").getTime();
+  const dated = (id: number, day: string, from: string, to?: string) => job(id, {
+    scheduled_delivery_ts: `${day} 05:06:20`,
+    stops: [{ ...job(id).stops[0], delivery_windows: [{ time_from: from, time_to: to }] }],
+  });
+  assert.equal(pickupTimePassed(dated(801, "2026-11-24", "10:20:00+07:00", "10:50:00+07:00"), morning), true);
+  assert.equal(pickupTimePassed(dated(802, "2026-11-25", "10:20:00+07:00", "10:50:00+07:00"), morning), false);
+  assert.equal(pickupTimePassed(dated(803, "2026-11-25", "07:00:00+07:00", "08:00:00+07:00"), morning), false, "still inside its window");
+  assert.equal(pickupTimePassed(dated(804, "2026-11-26", "00:10:00+07:00"), new Date("2026-11-25T23:35:00+07:00").getTime()), false, "tomorrow's early pickup");
+  assert.equal(pickupTimePassed(job(805), morning), false, "no scheduled day → cannot tell → remind");
+  const beforeStale = sends.length;
+  await remindScheduledPickup(dated(806, "2026-11-24", "10:20:00+07:00", "10:50:00+07:00"), "prod", log, morning);
+  assert.equal(sends.length, beforeStale, "yesterday's pickup released late sends nothing");
+  assert.ok(logs.some((line) => line.includes("Job 806 - Fixed-pickup Zalo reminder skipped: pickup time already passed")));
+  await remindScheduledPickup(dated(807, "2026-11-25", "10:20:00+07:00", "10:50:00+07:00"), "prod", log, morning);
+  assert.equal(sends.length, beforeStale + 1, "today's pickup still reminds");
   console.log("Scheduled pickup reminder checks passed.");
 } finally {
   globalThis.fetch = originalFetch;
