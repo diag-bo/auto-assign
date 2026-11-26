@@ -8,6 +8,8 @@ import {
   updateLocationPhone,
 } from "@/lib/labcenter";
 import { salesByline, salesUser } from "@/lib/sales-session";
+import { sbSelect } from "@/lib/supabase-rest";
+import type { WeekHours } from "@/lib/location-hours";
 import { notifyAdminGroup } from "@/lib/zalo";
 
 export const runtime = "nodejs";
@@ -45,12 +47,20 @@ export async function GET(req: NextRequest) {
 
   try {
     const locations = await listLocationsByClientCode(clientCode, token);
+    // Opening hours (sales-entered, Supabase). A failed read shows "not given"
+    // rather than costing the whole list.
+    const hours = new Map(
+      (await sbSelect<{ lc_location_id: number; hours: WeekHours }>(
+        "location_hours", `select=lc_location_id,hours&client_code=eq.${encodeURIComponent(clientCode)}`,
+      ).catch(() => [])).map((r) => [Number(r.lc_location_id), r.hours]),
+    );
     return NextResponse.json({
       locations: locations.map((l) => ({
         id: l.id,
         name: l.name,
         phone: l.phone,
         address: l.address,
+        hours: hours.get(l.id) ?? {},
       })),
     });
   } catch (e) {

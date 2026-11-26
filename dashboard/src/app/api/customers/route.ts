@@ -4,7 +4,9 @@ import { DELIVERY_BASE, getAdminToken, labcenterFetch, listLocationsByClientCode
 import { loadPscRoutes } from "@/lib/psc-config";
 import { haversineKm } from "@/lib/distance";
 import { notifyAdminGroup } from "@/lib/zalo";
-import { salesByline } from "@/lib/sales-session";
+import { salesByline, salesUser } from "@/lib/sales-session";
+import { cleanWeekHours, summarizeWeekHours } from "@/lib/location-hours";
+import { sbUpsert } from "@/lib/supabase-rest";
 
 // Node modules throughout; it cannot run in Vercel's Edge runtime.
 export const runtime = "nodejs";
@@ -44,7 +46,7 @@ async function registerLabcenterPickDrop(
   clientCode: string,
   lat: number,
   lon: number,
-): Promise<{ ok: boolean; drop_id?: string; error?: string }> {
+): Promise<{ ok: boolean; drop_id?: string; location_id?: number; error?: string }> {
   const token = await getAdminToken();
   if (!token) return { ok: false, error: "Labcenter login failed (check LABCENTER_EMAIL/LABCENTER_PASSWORD)" };
 
@@ -77,10 +79,11 @@ async function registerLabcenterPickDrop(
   }
   // Labcenter answers 200 to writes it discards — confirm the place now exists.
   const locations = await listLocationsByClientCode(clientCode, token);
-  if (!locations.some((l) => l.name === name)) {
+  const made = locations.find((l) => l.name === name);
+  if (!made) {
     return { ok: false, drop_id: nearest.uuid, error: "Labcenter trả về 200 nhưng không thấy địa điểm khi đọc lại" };
   }
-  return { ok: true, drop_id: nearest.uuid };
+  return { ok: true, drop_id: nearest.uuid, location_id: made.id };
 }
 
 // ── GET /api/customers?name=... — check duplicate by exact customer_name ─────
@@ -134,6 +137,7 @@ export async function POST(req: NextRequest) {
       force,
       check_prefix,
       client_code,
+      hours,
     } = body as {
       customer_name: string;
       address_line_1?: string;
@@ -143,11 +147,17 @@ export async function POST(req: NextRequest) {
       force?: boolean;
       check_prefix?: string;
       client_code?: string;
+      hours?: unknown; // optional opening hours, saved once Labcenter has the location
     };
 
     if (!customer_name) {
       return NextResponse.json({ error: "Missing customer_name" }, { status: 400 });
     }
+    // Checked before anything is created, so a bad time never leaves a customer
+    // made without the hours the rep typed.
+    const cleanedHours = hours == null ? { hours: {} } : cleanWeekHours(hours);
+    if ("error" in cleanedHours) return NextResponse.json({ error: cleanedHours.error }, { status: 400 });
+    const hoursSummary = summarizeWeekHours(cleanedHours.hours);
 
     const headers = getHeaders(env);
 
@@ -237,7 +247,7 @@ export async function POST(req: NextRequest) {
     const created = await createRes.json();
     const customer = created.data;
 
-    let labcenter: { ok: boolean; drop_id?: string; error?: string } | null = null;
+    let labcenter: { ok: boolean; drop_id?: string; location_id?: number; error?: string } | null = null;
     if (customer?.customer_id && latitude != null && longitude != null) {
       try {
         labcenter = await registerLabcenterPickDrop(customer.customer_id, customer_name, code, latitude, longitude);
@@ -247,8 +257,27 @@ export async function POST(req: NextRequest) {
       if (!labcenter.ok) console.error("Labcenter pick/drop for", customer.customer_id, labcenter.error);
     }
 
+    // Hours are keyed by the Labcenter location, so they can only land once it exists.
+    let hoursSaved: boolean | null = null;
+    if (hoursSummary) {
+      hoursSaved = false;
+      if (labcenter?.ok && labcenter.location_id && code) {
+        try {
+          await sbUpsert("location_hours", [{
+            lc_location_id: labcenter.location_id,
+            client_code: code,
+            hours: cleanedHours.hours,
+            updated_at: new Date().toISOString(),
+            updated_by: salesUser(req)?.email ?? null,
+          }], "lc_location_id");
+          hoursSaved = true;
+        } catch (e) { console.error("New client hours:", e); }
+      }
+    }
+
     await notifyAdminGroup(
       `🆕 Sales tạo khách hàng mới\n${customer_name}\n${address_line_1 || "(không có địa chỉ)"}` +
+        (hoursSaved ? `\n🕒 ${hoursSummary}` : "") +
         (labcenter && !labcenter.ok
           ? `\n⚠️ CHƯA tạo được trên Labcenter (${labcenter.error}). Cartrack id: ${customer.customer_id}`
           : "") +
@@ -267,7 +296,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: true, customer, labcenter });
+    return NextResponse.json({ success: true, customer, labcenter, hours_saved: hoursSaved });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

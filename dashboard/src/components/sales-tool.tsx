@@ -5,6 +5,7 @@ import { DeliveryBooking } from "@/app/qr/[code]/delivery-booking";
 import { LAB_CUSTOMER_ID } from "@/lib/job-filters";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
 import { codeLabel } from "@/lib/place-label";
+import { cleanWeekHours, summarizeWeekHours, WEEKDAYS, WEEKDAY_LABEL, type DayHours, type WeekHours } from "@/lib/location-hours";
 
 type Prediction = {
   place_id: string;
@@ -413,7 +414,96 @@ function ClientSearch({
   );
 }
 
-type SalesLocation = { id: number; name: string; phone: string; address: string };
+type SalesLocation = { id: number; name: string; phone: string; address: string; hours?: WeekHours };
+
+// A day in the editor: `on` marks "Mở cửa" picked before any time is typed; the
+// server drops it. No entry at all = "Chưa rõ" (not given, not the same as closed).
+type DayDraft = DayHours & { on?: boolean };
+type WeekDraft = Partial<Record<string, DayDraft>>;
+
+/** Order-proof fingerprint of a week (jsonb hands keys back re-ordered). */
+function hoursKey(h: WeekHours | undefined): string {
+  return WEEKDAYS.map((d) => {
+    const x = h?.[d];
+    return x ? [x.closed ? 1 : 0, x.open ?? "", x.close ?? "", x.break_from ?? "", x.break_to ?? ""].join(",") : "-";
+  }).join("|");
+}
+
+const TIME_INPUT = "w-full min-h-[44px] border rounded-lg px-2.5 py-2 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400";
+
+/** Giờ làm việc: one row per weekday, every field optional. */
+function HoursEditor({ value, onChange }: { value: WeekDraft; onChange: (v: WeekDraft) => void }) {
+  const setDay = (d: string, v: DayDraft | null) => {
+    const next = { ...value };
+    if (v) next[d] = v; else delete next[d];
+    onChange(next);
+  };
+  const mode = (x?: DayDraft) => (!x ? "" : x.closed ? "closed" : "open");
+  const copyMonday = () => {
+    const mon = value["1"];
+    const next = { ...value };
+    for (const d of ["2", "3", "4", "5"]) { if (mon) next[d] = { ...mon }; else delete next[d]; }
+    onChange(next);
+  };
+  const summary = summarizeWeekHours(value);
+  return (
+    <div className="space-y-1.5">
+      {/* The whole week in one line: on a phone the seven cards run several screens. */}
+      <p className={`text-xs rounded-lg px-2.5 py-2 ${summary ? "bg-blue-50 text-blue-800" : "bg-slate-50 text-slate-400"}`}>
+        {summary || "Chưa nhập giờ làm việc"}
+      </p>
+      {WEEKDAYS.map((d) => {
+        const x = value[d];
+        const m = mode(x);
+        const dayCheck = x ? cleanWeekHours({ [d]: x }) : null;
+        const dayError = dayCheck && "error" in dayCheck ? dayCheck.error.replace(/^\S+: (.)/, (_, c: string) => c.toUpperCase()) : null;
+        const field = (f: "open" | "close" | "break_from" | "break_to", label: string) => (
+          <label className="block">
+            <span className="block text-[11px] text-slate-500 mb-0.5">{label}</span>
+            <input
+              type="time"
+              aria-label={`${WEEKDAY_LABEL[d]} ${label}`}
+              value={x?.[f] ?? ""}
+              onChange={(e) => setDay(d, { ...x, on: true, [f]: e.target.value })}
+              className={TIME_INPUT}
+            />
+          </label>
+        );
+        return (
+          <div key={d} className={`border rounded-xl px-2.5 py-2 ${dayError ? "border-red-300 bg-red-50/50" : "border-slate-200"}`}>
+            <div className="flex items-center gap-2">
+              <span className="w-7 text-sm font-semibold text-slate-700">{WEEKDAY_LABEL[d]}</span>
+              <select
+                value={m}
+                aria-label={`${WEEKDAY_LABEL[d]} trạng thái`}
+                onChange={(e) => setDay(d, e.target.value === "open" ? { on: true } : e.target.value === "closed" ? { closed: true } : null)}
+                className="border rounded-lg min-h-[40px] px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
+              >
+                <option value="">Chưa rõ</option>
+                <option value="open">Mở cửa</option>
+                <option value="closed">Đóng cửa</option>
+              </select>
+              {d === "1" && (
+                <button type="button" onClick={copyMonday} disabled={!x} className="ml-auto min-h-[40px] px-1 text-xs font-medium text-blue-600 hover:underline disabled:text-slate-300 disabled:no-underline">
+                  Chép T2 → T3–T6
+                </button>
+              )}
+            </div>
+            {m === "open" && (
+              <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1.5">
+                {field("open", "Mở cửa")}
+                {field("close", "Đóng cửa")}
+                {field("break_from", "Nghỉ trưa từ")}
+                {field("break_to", "Nghỉ trưa đến")}
+              </div>
+            )}
+            {dayError && <p role="alert" className="text-xs text-red-600 mt-1.5">{dayError}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // `user` = the /sales page (all three tabs, rep-scoped search). Without it this is
 // the admin dashboard's "Tạo Mới KH": the new-customer form alone, every client.
@@ -548,6 +638,8 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const [edLocationId, setEdLocationId] = useState<number | null>(null);
   const [edLocFilter, setEdLocFilter] = useState(""); // type-to-search over the list
   const [edNewPhone, setEdNewPhone] = useState("");
+  const [edClientCode, setEdClientCode] = useState("");
+  const [edHours, setEdHours] = useState<WeekDraft>({});
   // The new address, picked from Goong. Coords only come from a real pick, so a
   // typed-but-unpicked string can't submit (no coordinates to send).
   const [edAddress, setEdAddress] = useState("");
@@ -565,7 +657,11 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const edPhoneChanged =
     edPhoneValid && !!edSelectedLocation && edSelectedLocation.phone.replace(/\D/g, "") !== edNewPhone;
   const edHasNewCoords = edLat != null && edLon != null;
-  const edCanSubmit = !!edSelectedLocation && (edPhoneChanged || edHasNewCoords);
+  const edHoursClean = cleanWeekHours(edHours);
+  const edHoursError = "error" in edHoursClean ? edHoursClean.error : null;
+  const edHoursChanged =
+    !!edSelectedLocation && "hours" in edHoursClean && hoursKey(edHoursClean.hours) !== hoursKey(edSelectedLocation.hours);
+  const edCanSubmit = !!edSelectedLocation && !edHoursError && (edPhoneChanged || edHasNewCoords || edHoursChanged);
 
   // Filter the location list by name / address / phone (diacritic-insensitive).
   const edFilteredLocations = edLocFilter.trim()
@@ -582,6 +678,8 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const edLoadLocations = async (code: string, label: string) => {
     setEdClientSearch(label);
     setEdClientSelected(true);
+    setEdClientCode(code);
+    setEdHours({});
     setEdLocationId(null);
     setEdLocFilter("");
     setEdNewPhone("");
@@ -615,6 +713,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const edPickLocation = (l: SalesLocation) => {
     setEdLocationId(l.id);
     setEdNewPhone(l.phone.replace(/\D/g, ""));
+    setEdHours(l.hours ?? {});
     setEdAddress(""); setEdLat(null); setEdLon(null);
     setEdResult(null);
   };
@@ -701,9 +800,26 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
         }
       }
 
+      if (edHoursChanged && "hours" in edHoursClean) {
+        const res = await fetch("/api/sales/hours", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_code: edClientCode, location_id: edLocationId, hours: edHoursClean.hours, customer_name: edSelectedLocation?.name }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          done.push(data.summary ? `Giờ làm việc → ${data.summary}` : "Đã xoá giờ làm việc");
+          setEdLocations((prev) => prev.map((l) => (l.id === edLocationId ? { ...l, hours: data.hours } : l)));
+          setEdHours(data.hours);
+        } else {
+          anyFail = true;
+          done.push(`Giờ làm việc thất bại: ${data.error ?? "lỗi"}`);
+        }
+      }
+
       setEdResult({
         ok: !anyFail,
-        msg: (anyFail ? "Có mục chưa cập nhật được. " : "Đã cập nhật trên Cartrack & Labcenter. ") + done.join(" · "),
+        msg: (anyFail ? "Có mục chưa cập nhật được. " : "Đã cập nhật. ") + done.join(" · "),
       });
     } catch (e) {
       setEdResult({ ok: false, msg: String(e) });
@@ -725,6 +841,8 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const [tenKh, setTenKh] = useState("");
   const [diaChi, setDiaChi] = useState("");
   const [phone, setPhone] = useState("");
+  const [newHours, setNewHours] = useState<WeekDraft>({});
+  const newHoursClean = cleanWeekHours(newHours);
   // Set by pressing "Tạo" with fields missing: every missing field turns red.
   const [showMissing, setShowMissing] = useState(false);
   const [lat, setLat] = useState("");
@@ -896,7 +1014,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
   const missingMsg = (k: string) =>
     isMissing(k) && <p className="text-xs text-red-600 mt-1">{MISSING_MSG[k]}</p>;
 
-  const canSubmit = missingFields.length === 0 && !loading;
+  const canSubmit = missingFields.length === 0 && !("error" in newHoursClean) && !loading;
 
   const doSubmit = async (forceName?: string) => {
     if (!canSubmit) return;
@@ -910,6 +1028,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
         contact_number: phone.trim() || undefined,
         check_prefix: checkPrefix,
         client_code: maKh,
+        ...("hours" in newHoursClean && Object.keys(newHoursClean.hours).length ? { hours: newHoursClean.hours } : {}),
         ...(forceName !== undefined ? { force: true } : {}),
       };
       const latNum = parseFloat(lat);
@@ -939,9 +1058,11 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
         // the form still clears — but a Labcenter miss must not read as success.
         setResult(data.labcenter && !data.labcenter.ok
           ? { ok: false, msg: `Đã tạo trên Cartrack nhưng CHƯA tạo được trên Labcenter (${data.labcenter.error}). Đã báo điều phối Logistics.` }
+          : data.hours_saved === false
+          ? { ok: false, msg: "Đã tạo địa điểm, nhưng CHƯA lưu được giờ làm việc — nhập lại ở tab SĐT, Địa Chỉ & Giờ." }
           : { ok: true, msg: "Đã tạo địa điểm lấy mẫu thành công." });
         setDuplicates(null);
-        setMaKh(""); setQuanCu(""); setTenDuong(""); setTenKh(""); setDiaChi(""); setLat(""); setLon(""); setPhone("");
+        setMaKh(""); setQuanCu(""); setTenDuong(""); setTenKh(""); setDiaChi(""); setLat(""); setLon(""); setPhone(""); setNewHours({});
         setClientSearch(""); setClientSelected(false); setClientSearchKey((k) => k + 1);
         setQuanSearch(""); setQuanSelected(false);
         setAddressPicked(false); setShowStreetModal(false); setShowClientNameModal(false);
@@ -955,6 +1076,11 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
 
   const submit = () => {
     const first = missingFields[0];
+    if (!first && "error" in newHoursClean) {
+      // Only the hours are wrong: take the rep to the day that says so.
+      document.querySelector<HTMLElement>('[role="alert"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     if (!first) { setShowMissing(false); return doSubmit(); }
     setShowMissing(true);
     if (first === "name") setShowClientNameModal(true);
@@ -993,7 +1119,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
             {tab === "customer"
               ? "Tạo địa điểm lấy mẫu cho khách hàng mới"
               : tab === "edit"
-              ? "Cập Nhật SĐT & Địa Chỉ"
+              ? "Cập Nhật SĐT, Địa Chỉ & Giờ"
               : tab === "kqvt"
               ? "Giao kết quả / vật tư"
               : "Huỷ yêu cầu giao nhận"}
@@ -1003,7 +1129,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
         {user && <div className="grid grid-cols-4 border-t border-slate-100">
           {([
             ["customer", "KH mới"],
-            ["edit", "Cập Nhật SĐT & Địa Chỉ"],
+            ["edit", "SĐT, Địa Chỉ & Giờ"],
             ["kqvt", "KQ/VT"],
             ["reject", "Huỷ"],
           ] as const).map(([key, label], i) => (
@@ -1154,12 +1280,22 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
             )}
 
             {edSelectedLocation && (
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Giờ Làm Việc</label>
+                <p className="text-[10.5px] text-slate-400 mb-1.5 leading-relaxed">
+                  Không bắt buộc. Để &quot;Chưa rõ&quot; ngày nào không biết giờ; giờ nghỉ trưa có thể bỏ trống.
+                </p>
+                <HoursEditor value={edHours} onChange={setEdHours} />
+              </div>
+            )}
+
+            {edSelectedLocation && (
               <button
                 onClick={submitEdits}
                 disabled={!edCanSubmit || edLoading}
                 className="w-full py-3.5 rounded-xl font-bold text-white text-base bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               >
-                {edLoading ? "Đang cập nhật..." : !edCanSubmit ? "Chưa có thay đổi" : "Cập nhật"}
+                {edLoading ? "Đang cập nhật..." : edHoursError ? "Sửa giờ làm việc để cập nhật" : !edCanSubmit ? "Chưa có thay đổi" : "Cập nhật"}
               </button>
             )}
 
@@ -1543,6 +1679,14 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
                 : missingMsg("phone")}
             </div>
 
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1">Giờ Làm Việc</label>
+              <p className="text-[10.5px] text-slate-400 mb-1.5 leading-relaxed">
+                Không bắt buộc. Để &quot;Chưa rõ&quot; ngày nào không biết giờ; giờ nghỉ trưa có thể bỏ trống.
+              </p>
+              <HoursEditor value={newHours} onChange={setNewHours} />
+            </div>
+
             {customerName && (
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
                 <p className="text-xs font-medium text-slate-500 mb-1">Tên trên Cartrack</p>
@@ -1561,7 +1705,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
               disabled={loading}
               className="w-full py-3.5 rounded-xl font-bold text-white text-base bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >
-              {loading ? "Đang kiểm tra & tạo..." : "Tạo địa điểm"}
+              {loading ? "Đang kiểm tra & tạo..." : "error" in newHoursClean ? "Sửa giờ làm việc để tạo" : "Tạo địa điểm"}
             </button>
 
             {result && (
