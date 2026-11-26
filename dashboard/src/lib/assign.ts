@@ -790,16 +790,19 @@ export async function alertLateJobs(
     const stamp = lastDriverStamp(dayJobs, w.driver_id, today);
     let lastLine = "Lần cuối: chưa có thao tác hôm nay";
     if (stamp) {
-      let km: number | null = null;
+      let road: { distance_km: number; eta_mins: number } | null = null;
       if (stamp.stop_id !== w.pickup_stop_id && stamp.lat != null && stamp.lon != null
         && w.pickup_lat != null && w.pickup_lon != null) {
-        const [road] = await roadDistancesFromPoint(
+        [road] = await roadDistancesFromPoint(
           { lat: stamp.lat, lon: stamp.lon },
           [{ lat: w.pickup_lat, lon: w.pickup_lon }],
         ).catch(() => [null]);
-        km = road?.distance_km ?? null;
       }
-      lastLine = `Lần cuối: ${stampText(stamp)}${km != null ? `, cách ${km.toFixed(1)} km` : ""}`;
+      // Drive time rides the same lookup as the km — no extra request.
+      const far = road
+        ? `, cách ${road.distance_km.toFixed(1)} km${road.eta_mins ? ` ~${Math.round(road.eta_mins)} phút` : ""}`
+        : "";
+      lastLine = `Lần cuối: ${stampText(stamp)}${far}`;
     }
     // The job id goes out as the fleetweb deep link only — same URL the dashboard
     // job chips use. Zalo auto-links a bare URL, so no parse_mode is needed, and
