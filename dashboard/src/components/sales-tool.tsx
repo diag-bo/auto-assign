@@ -5,7 +5,7 @@ import { DeliveryBooking } from "@/app/qr/[code]/delivery-booking";
 import { LAB_CUSTOMER_ID } from "@/lib/job-filters";
 import { PSC_ROUTES } from "@/lib/psc-routes-data";
 import { codeLabel } from "@/lib/place-label";
-import { cleanWeekHours, summarizeWeekHours, WEEKDAYS, WEEKDAY_LABEL, type DayHours, type WeekHours } from "@/lib/location-hours";
+import { cleanWeekHours, weekHoursGroups, WEEKDAYS, WEEKDAY_LABEL, type DayHours, type WeekHours } from "@/lib/location-hours";
 
 type Prediction = {
   place_id: string;
@@ -416,9 +416,10 @@ function ClientSearch({
 
 type SalesLocation = { id: number; name: string; phone: string; address: string; hours?: WeekHours };
 
-// A day in the editor: `on` marks "Mở cửa" picked before any time is typed; the
-// server drops it. No entry at all = "Chưa rõ" (not given, not the same as closed).
-type DayDraft = DayHours & { on?: boolean };
+// A day in the editor: `on` marks "Mở cửa" picked before any time is typed, and
+// `split` a second range added before its times are typed; the server drops both.
+// No entry at all = "Chưa rõ" (not given, not the same as closed).
+type DayDraft = DayHours & { on?: boolean; split?: boolean };
 type WeekDraft = Partial<Record<string, DayDraft>>;
 
 /** Order-proof fingerprint of a week (jsonb hands keys back re-ordered). */
@@ -429,78 +430,114 @@ function hoursKey(h: WeekHours | undefined): string {
   }).join("|");
 }
 
-const TIME_INPUT = "w-full min-h-[44px] border rounded-lg px-2.5 py-2 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400";
+// The picker icon is hidden (it clipped "07:00" on a phone); a tap on the field opens the picker instead.
+const TIME_INPUT = "flex-1 min-w-0 min-h-[40px] text-center [&::-webkit-calendar-picker-indicator]:hidden border rounded-lg px-1 py-1.5 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400";
 
-/** Giờ làm việc: one row per weekday, every field optional. */
+/** Giờ làm việc, laid out like Google Business Profile: a switch and a time range
+ *  per day, and a lunch break is a SECOND range ("07:00–12:00, 13:00–17:00").
+ *  Two ranges map straight onto open / break_from / break_to / close. */
 function HoursEditor({ value, onChange }: { value: WeekDraft; onChange: (v: WeekDraft) => void }) {
   const setDay = (d: string, v: DayDraft | null) => {
     const next = { ...value };
     if (v) next[d] = v; else delete next[d];
     onChange(next);
   };
-  const mode = (x?: DayDraft) => (!x ? "" : x.closed ? "closed" : "open");
+  const mon = value["1"];
   const copyMonday = () => {
-    const mon = value["1"];
     const next = { ...value };
     for (const d of ["2", "3", "4", "5"]) { if (mon) next[d] = { ...mon }; else delete next[d]; }
     onChange(next);
   };
-  const summary = summarizeWeekHours(value);
+  const groups = weekHoursGroups(value);
   return (
-    <div className="space-y-1.5">
-      {/* The whole week in one line: on a phone the seven cards run several screens. */}
-      <p className={`text-xs rounded-lg px-2.5 py-2 ${summary ? "bg-blue-50 text-blue-800" : "bg-slate-50 text-slate-400"}`}>
-        {summary || "Chưa nhập giờ làm việc"}
-      </p>
-      {WEEKDAYS.map((d) => {
-        const x = value[d];
-        const m = mode(x);
-        const dayCheck = x ? cleanWeekHours({ [d]: x }) : null;
-        const dayError = dayCheck && "error" in dayCheck ? dayCheck.error.replace(/^\S+: (.)/, (_, c: string) => c.toUpperCase()) : null;
-        const field = (f: "open" | "close" | "break_from" | "break_to", label: string) => (
-          <label className="block">
-            <span className="block text-[11px] text-slate-500 mb-0.5">{label}</span>
+    <div>
+      {/* The whole week at a glance, one run of identical days per line. */}
+      {groups.length ? (
+        <dl className="text-xs rounded-lg px-2.5 py-2 mb-1 bg-blue-50 text-blue-900 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+          {groups.map((g) => (
+            <div key={g.days} className="contents">
+              <dt className="font-semibold">{g.days}</dt>
+              <dd>{g.text}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-xs rounded-lg px-2.5 py-2 mb-1 bg-slate-50 text-slate-400">Chưa nhập giờ làm việc</p>
+      )}
+      <div className="divide-y divide-slate-100">
+        {WEEKDAYS.map((d) => {
+          const x = value[d];
+          const open = !!x && !x.closed;
+          const split = open && (!!x.split || !!x.break_from || !!x.break_to);
+          const dayCheck = x ? cleanWeekHours({ [d]: x }) : null;
+          const dayError = dayCheck && "error" in dayCheck ? dayCheck.error.replace(/^\S+: (.)/, (_, c: string) => c.toUpperCase()) : null;
+          const time = (f: "open" | "close" | "break_from" | "break_to", label: string) => (
             <input
               type="time"
               aria-label={`${WEEKDAY_LABEL[d]} ${label}`}
               value={x?.[f] ?? ""}
               onChange={(e) => setDay(d, { ...x, on: true, [f]: e.target.value })}
-              className={TIME_INPUT}
+              onClick={(e) => { try { e.currentTarget.showPicker?.(); } catch {} }}
+              className={`${TIME_INPUT} ${dayError ? "border-red-300" : ""}`}
             />
-          </label>
-        );
-        return (
-          <div key={d} className={`border rounded-xl px-2.5 py-2 ${dayError ? "border-red-300 bg-red-50/50" : "border-slate-200"}`}>
-            <div className="flex items-center gap-2">
-              <span className="w-7 text-sm font-semibold text-slate-700">{WEEKDAY_LABEL[d]}</span>
-              <select
-                value={m}
-                aria-label={`${WEEKDAY_LABEL[d]} trạng thái`}
-                onChange={(e) => setDay(d, e.target.value === "open" ? { on: true } : e.target.value === "closed" ? { closed: true } : null)}
-                className="border rounded-lg min-h-[40px] px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-              >
-                <option value="">Chưa rõ</option>
-                <option value="open">Mở cửa</option>
-                <option value="closed">Đóng cửa</option>
-              </select>
-              {d === "1" && (
-                <button type="button" onClick={copyMonday} disabled={!x} className="ml-auto min-h-[40px] px-1 text-xs font-medium text-blue-600 hover:underline disabled:text-slate-300 disabled:no-underline">
-                  Chép T2 → T3–T6
+          );
+          return (
+            <div key={d} className="py-2">
+              <div className="flex items-start gap-2">
+                <span className="w-7 pt-2.5 text-sm font-semibold text-slate-700">{WEEKDAY_LABEL[d]}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={open}
+                  aria-label={`${WEEKDAY_LABEL[d]} mở cửa`}
+                  onClick={() => setDay(d, open ? { closed: true } : { on: true })}
+                  className={`mt-2 relative h-6 w-10 shrink-0 rounded-full transition-colors ${open ? "bg-blue-600" : "bg-slate-300"}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${open ? "translate-x-4" : ""}`} />
                 </button>
-              )}
-            </div>
-            {m === "open" && (
-              <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1.5">
-                {field("open", "Mở cửa")}
-                {field("close", "Đóng cửa")}
-                {field("break_from", "Nghỉ trưa từ")}
-                {field("break_to", "Nghỉ trưa đến")}
+                <div className="flex-1 min-w-0">
+                  {open ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5">
+                        {time("open", "giờ mở cửa")}<span className="text-slate-400">–</span>{time(split ? "break_from" : "close", split ? "nghỉ trưa từ" : "giờ đóng cửa")}
+                        <span className="w-6 shrink-0" />
+                      </div>
+                      {split ? (
+                        <div className="flex items-center gap-1.5">
+                          {time("break_to", "mở lại lúc")}<span className="text-slate-400">–</span>{time("close", "giờ đóng cửa")}
+                          <button
+                            type="button"
+                            aria-label={`${WEEKDAY_LABEL[d]} bỏ giờ nghỉ`}
+                            onClick={() => { const { break_from: _f, break_to: _t, split: _s, ...rest } = x!; void _f; void _t; void _s; setDay(d, rest); }}
+                            className="w-6 shrink-0 min-h-[40px] text-lg leading-none text-slate-400 hover:text-red-600"
+                          >×</button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => setDay(d, { ...x, split: true })} className="text-xs font-medium text-blue-600 hover:underline py-1">
+                          + Thêm giờ nghỉ trưa
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 pt-2.5">
+                      <span className={`text-sm ${x ? "text-slate-700" : "text-slate-400"}`}>{x ? "Đóng cửa" : "Chưa rõ"}</span>
+                      <button type="button" onClick={() => setDay(d, x ? null : { closed: true })} className="text-xs text-slate-400 hover:text-slate-600 hover:underline">
+                        {x ? "Đặt lại Chưa rõ" : "Đánh dấu đóng cửa"}
+                      </button>
+                    </div>
+                  )}
+                  {dayError && <p role="alert" className="text-xs text-red-600 mt-1">{dayError}</p>}
+                </div>
               </div>
-            )}
-            {dayError && <p role="alert" className="text-xs text-red-600 mt-1.5">{dayError}</p>}
-          </div>
-        );
-      })}
+            </div>
+          );
+        })}
+      </div>
+      {mon && !mon.closed && (
+        <button type="button" onClick={copyMonday} className="mt-1 min-h-[40px] text-xs font-medium text-blue-600 hover:underline">
+          Áp dụng giờ T2 cho T3–T6
+        </button>
+      )}
     </div>
   );
 }
@@ -1283,7 +1320,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Giờ Làm Việc</label>
                 <p className="text-[10.5px] text-slate-400 mb-1.5 leading-relaxed">
-                  Không bắt buộc. Để &quot;Chưa rõ&quot; ngày nào không biết giờ; giờ nghỉ trưa có thể bỏ trống.
+                  Không bắt buộc. Bật ngày nào mở cửa; ngày không biết giờ cứ để &quot;Chưa rõ&quot;.
                 </p>
                 <HoursEditor value={edHours} onChange={setEdHours} />
               </div>
@@ -1682,7 +1719,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1">Giờ Làm Việc</label>
               <p className="text-[10.5px] text-slate-400 mb-1.5 leading-relaxed">
-                Không bắt buộc. Để &quot;Chưa rõ&quot; ngày nào không biết giờ; giờ nghỉ trưa có thể bỏ trống.
+                Không bắt buộc. Bật ngày nào mở cửa; ngày không biết giờ cứ để &quot;Chưa rõ&quot;.
               </p>
               <HoursEditor value={newHours} onChange={setNewHours} />
             </div>

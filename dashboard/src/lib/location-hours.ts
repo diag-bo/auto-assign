@@ -43,22 +43,28 @@ export function cleanWeekHours(raw: unknown): { hours: WeekHours } | { error: st
 /** "T2–T6 07:00–17:00 (nghỉ 12:00–13:00) · T7 07:00–11:30 · CN nghỉ" — runs of
  *  identical days are joined. "" when nothing was given. */
 export function summarizeWeekHours(h: WeekHours | null | undefined): string {
-  if (!h) return "";
+  return weekHoursGroups(h).map((g) => `${g.days} ${g.text}`).join(" · ");
+}
+
+/** The same runs as a list — [{days: "T2–T6", text: "07:00–17:00 (nghỉ 12:00–13:00)"}] —
+ *  for a screen, where one wrapped line is hard to read. */
+export function weekHoursGroups(h: WeekHours | null | undefined): { days: string; text: string }[] {
+  if (!h) return [];
   const text = (d: DayHours) => {
     if (d.closed) return "nghỉ";
     const span = d.open || d.close ? `${d.open ?? "?"}–${d.close ?? "?"}` : "";
     const brk = d.break_from ? `nghỉ ${d.break_from}–${d.break_to}` : "";
     return span && brk ? `${span} (${brk})` : span || brk;
   };
-  const parts: string[] = [];
+  const parts: { days: string; text: string }[] = [];
   let i = 0;
   while (i < WEEKDAYS.length) {
     const d = h[WEEKDAYS[i]];
     const t = d ? text(d) : "";
     let j = i;
     while (t && j + 1 < WEEKDAYS.length && h[WEEKDAYS[j + 1]] && text(h[WEEKDAYS[j + 1]]!) === t) j++;
-    if (t) parts.push(`${WEEKDAY_LABEL[WEEKDAYS[i]]}${j > i ? `–${WEEKDAY_LABEL[WEEKDAYS[j]]}` : ""} ${t}`);
+    if (t) parts.push({ days: `${WEEKDAY_LABEL[WEEKDAYS[i]]}${j > i ? `–${WEEKDAY_LABEL[WEEKDAYS[j]]}` : ""}`, text: t });
     i = j + 1;
   }
-  return parts.join(" · ");
+  return parts;
 }
