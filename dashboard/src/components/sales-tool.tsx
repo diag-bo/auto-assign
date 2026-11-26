@@ -418,8 +418,9 @@ type SalesLocation = { id: number; name: string; phone: string; address: string;
 
 // A day in the editor: `on` marks "Mở cửa" picked before any time is typed, and
 // `split` a second range added before its times are typed; the server drops both.
-// No entry at all = "Chưa rõ" (not given, not the same as closed).
-type DayDraft = DayHours & { on?: boolean; split?: boolean };
+// No entry at all = "Chưa rõ" (not given, not the same as closed). `from` = this
+// day was filled from that day's hours and still follows it until edited itself.
+type DayDraft = DayHours & { on?: boolean; split?: boolean; from?: string };
 type WeekDraft = Partial<Record<string, DayDraft>>;
 
 /** Order-proof fingerprint of a week (jsonb hands keys back re-ordered). */
@@ -430,22 +431,29 @@ function hoursKey(h: WeekHours | undefined): string {
   }).join("|");
 }
 
-// The picker icon is hidden (it clipped "07:00" on a phone); a tap on the field opens the picker instead.
-const TIME_INPUT = "flex-1 min-w-0 min-h-[40px] text-center [&::-webkit-calendar-picker-indicator]:hidden border rounded-lg px-1 py-1.5 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400";
+// A list rather than <input type="time">: phone pickers ignore `step`, and every
+// clinic keeps quarter-hour times anyway.
+const QUARTER_HOURS = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, "0")}:${String((i % 4) * 15).padStart(2, "0")}`);
+const TIME_INPUT = "flex-1 min-w-0 min-h-[40px] appearance-none [text-align-last:center] border rounded-lg px-1 py-1.5 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400";
 
 /** Giờ làm việc, laid out like Google Business Profile: a switch and a time range
  *  per day, and a lunch break is a SECOND range ("07:00–12:00, 13:00–17:00").
  *  Two ranges map straight onto open / break_from / break_to / close. */
 function HoursEditor({ value, onChange }: { value: WeekDraft; onChange: (v: WeekDraft) => void }) {
+  // Editing a day makes it its own. A day that leads (was not filled from another)
+  // also fills every blank day when it opens, and keeps those followers in step
+  // until each is edited by hand — so the first day typed sets the whole week.
   const setDay = (d: string, v: DayDraft | null) => {
     const next = { ...value };
-    if (v) next[d] = v; else delete next[d];
-    onChange(next);
-  };
-  const mon = value["1"];
-  const copyMonday = () => {
-    const next = { ...value };
-    for (const d of ["2", "3", "4", "5"]) { if (mon) next[d] = { ...mon }; else delete next[d]; }
+    if (v) next[d] = { ...v, from: undefined }; else delete next[d];
+    if (!value[d]?.from) {
+      for (const o of WEEKDAYS) {
+        if (o === d) continue;
+        const cur = value[o];
+        if (cur ? cur.from !== d : !(v && !v.closed)) continue;
+        if (v) next[o] = { ...v, from: d }; else delete next[o];
+      }
+    }
     onChange(next);
   };
   const groups = weekHoursGroups(value);
@@ -472,14 +480,17 @@ function HoursEditor({ value, onChange }: { value: WeekDraft; onChange: (v: Week
           const dayCheck = x ? cleanWeekHours({ [d]: x }) : null;
           const dayError = dayCheck && "error" in dayCheck ? dayCheck.error.replace(/^\S+: (.)/, (_, c: string) => c.toUpperCase()) : null;
           const time = (f: "open" | "close" | "break_from" | "break_to", label: string) => (
-            <input
-              type="time"
+            <select
               aria-label={`${WEEKDAY_LABEL[d]} ${label}`}
               value={x?.[f] ?? ""}
               onChange={(e) => setDay(d, { ...x, on: true, [f]: e.target.value })}
-              onClick={(e) => { try { e.currentTarget.showPicker?.(); } catch {} }}
-              className={`${TIME_INPUT} ${dayError ? "border-red-300" : ""}`}
-            />
+              className={`${TIME_INPUT} ${dayError ? "border-red-300" : ""} ${x?.from ? "text-slate-400" : "text-slate-800"}`}
+            >
+              <option value="">--:--</option>
+              {/* A saved time off the quarter-hour still shows as itself. */}
+              {x?.[f] && !QUARTER_HOURS.includes(x[f]!) && <option value={x[f]}>{x[f]}</option>}
+              {QUARTER_HOURS.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
           );
           return (
             <div key={d} className="py-2">
@@ -533,11 +544,6 @@ function HoursEditor({ value, onChange }: { value: WeekDraft; onChange: (v: Week
           );
         })}
       </div>
-      {mon && !mon.closed && (
-        <button type="button" onClick={copyMonday} className="mt-1 min-h-[40px] text-xs font-medium text-blue-600 hover:underline">
-          Áp dụng giờ T2 cho T3–T6
-        </button>
-      )}
     </div>
   );
 }
@@ -1320,7 +1326,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Giờ Làm Việc</label>
                 <p className="text-[10.5px] text-slate-400 mb-1.5 leading-relaxed">
-                  Không bắt buộc. Bật ngày nào mở cửa; ngày không biết giờ cứ để &quot;Chưa rõ&quot;.
+                  Không bắt buộc. Giờ nhập ở ngày đầu tiên tự điền cho các ngày còn trống (chữ xám) — sửa hoặc tắt ngày nào khác.
                 </p>
                 <HoursEditor value={edHours} onChange={setEdHours} />
               </div>
@@ -1719,7 +1725,7 @@ export function SalesTool({ user, onLogout }: { user?: SalesUser; onLogout?: () 
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1">Giờ Làm Việc</label>
               <p className="text-[10.5px] text-slate-400 mb-1.5 leading-relaxed">
-                Không bắt buộc. Bật ngày nào mở cửa; ngày không biết giờ cứ để &quot;Chưa rõ&quot;.
+                Không bắt buộc. Giờ nhập ở ngày đầu tiên tự điền cho các ngày còn trống (chữ xám) — sửa hoặc tắt ngày nào khác.
               </p>
               <HoursEditor value={newHours} onChange={setNewHours} />
             </div>
