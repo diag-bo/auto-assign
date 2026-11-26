@@ -13,6 +13,8 @@ import { useParams } from "next/navigation";
 import { addDays, vnDate } from "@/lib/time";
 import { buildPscTinhTimeSlots, pscTinhDayLabel } from "@/lib/psc-tinh-time";
 import { DANANG_LEAD_MINS, validDanangPhone } from "@/lib/danang";
+import { PSC_ROUTES } from "@/lib/psc-routes-data";
+import { ExpectedResults } from "@/app/qr/[code]/expected-results";
 
 interface TplOption {
   tpl_uuid: string;
@@ -236,6 +238,8 @@ export default function PscTinhPage({ pscCode }: { pscCode?: string }) {
   const params = useParams();
   const code = (pscCode ?? params.code as string)?.toUpperCase();
   const meta = PSC_META[code];
+  // The hard-copy list is keyed by the branch's own Cartrack pickup, as on its /qr page.
+  const branchPickup = PSC_ROUTES.find((r) => r.psc_pickup === `BRA - ${code}`)?.pickup;
 
   // Completed trips open by default: it's the record staff come here to check.
   const [doneOpen, setDoneOpen] = useState(true);
@@ -603,6 +607,8 @@ export default function PscTinhPage({ pscCode }: { pscCode?: string }) {
             )}
           </div>
         </div>
+
+        {branchPickup && <ExpectedResults pickup={branchPickup} date={today} />}
 
         {/* Live requests */}
         <div className="space-y-3">
