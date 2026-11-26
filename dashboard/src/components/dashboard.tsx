@@ -944,7 +944,14 @@ export function Dashboard() {
                       scheduleErrors={scheduleErrors}
                       drivers={drivers}
                       onAssign={handleManualAssign}
-                      onConfigSaved={() => { setConfigRefreshKey(k => k + 1); void handleRefresh(); }}
+                      onConfigSaved={(jobId) => {
+                        // Hide the row until a cycle has run on the new config: the
+                        // snapshot is stale until then. Still failing → it comes back.
+                        dismissedFailedRef.current.set(jobId, Date.now() + FAILED_DISMISS_MS);
+                        setFailed((prev) => prev.filter((j) => j.job_id !== jobId));
+                        setConfigRefreshKey(k => k + 1);
+                        void handleRefresh();
+                      }}
                       onScheduleFailed={handleScheduleFailed}
                       leaveToday={leave.today}
                       leaveTomorrow={leave.tomorrow}

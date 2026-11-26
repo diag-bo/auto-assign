@@ -212,7 +212,7 @@ function FailedRow({
   onSchedule: (job: FailedJob, scheduledAt: string, label: string) => void;
   onOpenJob?: (jobId: number) => void;
   env: "prod" | "uat";
-  onConfigSaved: () => void;
+  onConfigSaved: (jobId: number) => void;
 }) {
   const [showConfig, setShowConfig] = useState(false);
   const [showDriverSelect, setShowDriverSelect] = useState(false);
@@ -454,7 +454,7 @@ function FailedRow({
       </div>
 
       {showConfig && <MissingJobConfig key={`${env}:${job.job_id}`} jobId={job.job_id} env={env} drivers={drivers}
-        onCancel={() => setShowConfig(false)} onSaved={() => { setShowConfig(false); onConfigSaved(); }} />}
+        onCancel={() => setShowConfig(false)} onSaved={() => { setShowConfig(false); onConfigSaved(job.job_id); }} />}
 
       {/* Every failed-assign reason ends with the job unassigned, so all of them
           allow a manual pick. (Manual assign is a direct Cartrack assign by
@@ -565,7 +565,7 @@ export function FailedJobsPanel({
   onLeaveRefresh: () => void;
   /** Open a job in the Điều chỉnh job panel (the "Điều chỉnh" chip on each row). */
   onOpenJob?: (jobId: number) => void;
-  onConfigSaved: () => void;
+  onConfigSaved: (jobId: number) => void;
 }) {
   // Today's uncovered leave counts toward the tab's total: it is a section of
   // this list now, so an otherwise-clear day with an unfilled substitute must
