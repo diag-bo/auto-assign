@@ -30,7 +30,7 @@ import {
   parseVnTimestamp,
 } from "./time";
 import { haversineKm } from "./distance";
-import { roadDistancesToPoint, roadDistancesForPairs } from "./distance-cache";
+import { roadDistancesToPoint, roadDistancesFromPoint, roadDistancesForPairs } from "./distance-cache";
 import { blockingNotes, isChamCong, isCompletedOrRejectedStop, isNoteApproved, DAYTIME_NON_BLOCKING, PSC_DELIVERY_LABEL } from "./job-filters";
 import { kqvtCycle, rankWithHolderFirst, type KqvtCycle } from "./kqvt";
 import { placeLabel } from "./place-label";
@@ -555,6 +555,61 @@ export interface LateAlert {
   ref: string;
   /** Set on windowed pickups — what dropStaleWindowWarnings keys on. */
   window_time_from?: string;
+  driver_id: string;
+  pickup_stop_id: number | null;
+  pickup_lat: number | null;
+  pickup_lon: number | null;
+}
+
+/** The driver's most recent stamp today — started, arrived or completed — on ANY of
+ *  their stops, with the stop it was on. Equal times read the further-along kind. */
+export interface DriverStamp {
+  ts: string;
+  kind: "started" | "arrived" | "completed";
+  stop_id: number | null;
+  is_pickup: boolean;
+  customer_name: string | null;
+  lat: number | null;
+  lon: number | null;
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function lastDriverStamp(dayJobs: any[], driverId: string, today: string): DriverStamp | null {
+  const kinds = [
+    ["started", "activity_started_ts"],
+    ["arrived", "activity_arrived_ts"],
+    ["completed", "activity_completed_ts"],
+  ] as const;
+  let best: DriverStamp | null = null;
+  let bestRank = -1;
+  for (const job of dayJobs) {
+    if (job.delivery_driver_id !== driverId) continue;
+    for (const s of job.stops ?? []) {
+      for (let rank = 0; rank < kinds.length; rank++) {
+        const [kind, field] = kinds[rank];
+        const ts: unknown = s[field];
+        // A rolled-over job can carry yesterday's stamps; only today's say where they are.
+        if (typeof ts !== "string" || !ts.startsWith(today)) continue;
+        const t = ts.slice(0, 19);
+        if (best && (t < best.ts || (t === best.ts && rank <= bestRank))) continue;
+        best = {
+          ts: t, kind, stop_id: s.stop_id ?? null, is_pickup: s.stop_type_id === 1,
+          customer_name: s.customer_name ?? null, lat: s.latitude ?? null, lon: s.longitude ?? null,
+        };
+        bestRank = rank;
+      }
+    }
+  }
+  return best;
+}
+
+/** "10:42 hoàn thành giao D001" — the supervisor's wording, 2026-11-26. */
+export function stampText(s: DriverStamp): string {
+  const place = s.customer_name ? placeLabel(s.customer_name) : "N/A";
+  const what =
+    s.kind === "completed" ? `hoàn thành ${s.is_pickup ? "lấy" : "giao"}`
+    : s.kind === "arrived" ? "đã tới"
+    : "bấm di chuyển tới";
+  return `${s.ts.slice(11, 16)} ${what} ${place}`;
 }
 
 /** Open client pickups the driver has not reached yet — plan jobs, engine legs and
@@ -627,6 +682,10 @@ export function computeLateAlerts(
       minutes_late: Math.floor((now - promisedMs) / 60_000),
       ref,
       ...(window ? { window_time_from: window.time_from } : {}),
+      driver_id: job.delivery_driver_id,
+      pickup_stop_id: pickup.stop_id ?? null,
+      pickup_lat: pickup.latitude ?? null,
+      pickup_lon: pickup.longitude ?? null,
     });
   }
   return out;
@@ -724,6 +783,24 @@ export async function alertLateJobs(
     // the supervisor sees the lateness AND what it's measured against in one glance
     // (the window, the ETA, or the booking time — built in computeLateAlerts).
     const ref = w.ref;
+    // Where the driver last did something, and how far by road that is from the late
+    // pickup. Road km comes from the distance cache — a new pair costs one billed
+    // lookup, and each job alerts once. Not measured when the stamp is ON this pickup
+    // (they pressed "đi tới" it), or on any lookup failure: the line is still sent.
+    const stamp = lastDriverStamp(dayJobs, w.driver_id, today);
+    let lastLine = "Lần cuối: chưa có thao tác hôm nay";
+    if (stamp) {
+      let km: number | null = null;
+      if (stamp.stop_id !== w.pickup_stop_id && stamp.lat != null && stamp.lon != null
+        && w.pickup_lat != null && w.pickup_lon != null) {
+        const [road] = await roadDistancesFromPoint(
+          { lat: stamp.lat, lon: stamp.lon },
+          [{ lat: w.pickup_lat, lon: w.pickup_lon }],
+        ).catch(() => [null]);
+        km = road?.distance_km ?? null;
+      }
+      lastLine = `Lần cuối: ${stampText(stamp)}${km != null ? `, cách ${km.toFixed(1)} km` : ""}`;
+    }
     // The job id goes out as the fleetweb deep link only — same URL the dashboard
     // job chips use. Zalo auto-links a bare URL, so no parse_mode is needed, and
     // the supervisor taps straight through instead of copying the id into a search.
@@ -731,6 +808,7 @@ export async function alertLateJobs(
       `⚠️ Trễ lấy mẫu ~${dur}${ref ? ` (${ref})` : ""}`,
       place,
       `Tài xế ${w.driver_name ? stripDriverCode(w.driver_name) : "chưa rõ tên"}`,
+      lastLine,
       `https://fleetweb-vn.cartrack.com/delivery/map?job=${w.job_id}`,
     ].join("\n");
 
