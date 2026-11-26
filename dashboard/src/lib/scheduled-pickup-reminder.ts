@@ -73,7 +73,7 @@ export async function remindScheduledPickup(
     if (!(await claimLateAlert(job.job_id, env, 86400, PICKUP_REMINDER_CLAIM))) return;
     for (const group of groups) {
       const bot = botOf(group)!;
-      const text = `${message(pickup.delivery_windows?.[0]?.time_from)}\n👉 Nếu hôm nay không có mẫu, tag **${mentionOf(bot)}** và nhắn "không có mẫu", "chưa có mẫu" hoặc tương tự!`;
+      const text = `${message(pickup.delivery_windows?.[0]?.time_from)}\n👉 Nếu hôm nay không có mẫu, có thể nhắc tới **${mentionOf(bot)}** và nhắn "không có mẫu", "chưa có mẫu" hoặc tương tự!`;
       if (!(await sendZaloMessage(clientBotToken(bot), group.chat_id, text, "markdown"))) {
         log(`Job ${job.job_id} - Fixed-pickup Zalo reminder failed`, "WARN");
       } else {
