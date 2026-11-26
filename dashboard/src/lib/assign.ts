@@ -602,14 +602,19 @@ export function lastDriverStamp(dayJobs: any[], driverId: string, today: string)
   return best;
 }
 
-/** "10:42 hoàn thành giao D001" — the supervisor's wording, 2026-11-26. */
-export function stampText(s: DriverStamp): string {
-  const place = s.customer_name ? placeLabel(s.customer_name) : "N/A";
+/** "10:42 hoàn thành giao D001 (**32 phút trước**)" — the supervisor's wording,
+ *  2026-11-26. Markdown bold; the place loses any "*" so it cannot break the markup. */
+export function stampText(s: DriverStamp, now: number = Date.now()): string {
+  const place = (s.customer_name ? placeLabel(s.customer_name) : "N/A").replace(/\*/g, "");
   const what =
     s.kind === "completed" ? `hoàn thành ${s.is_pickup ? "lấy" : "giao"}`
     : s.kind === "arrived" ? "đã tới"
     : "bấm di chuyển tới";
-  return `${s.ts.slice(11, 16)} ${what} ${place}`;
+  const ago = Math.max(0, Math.floor((now - parseVnTimestamp(s.ts).getTime()) / 60_000));
+  const h = Math.floor(ago / 60);
+  const m = ago % 60;
+  const agoText = h ? `${h}h${m ? String(m).padStart(2, "0") : ""}` : `${m} phút`;
+  return `${s.ts.slice(11, 16)} ${what} ${place} (**${agoText} trước**)`;
 }
 
 /** Open client pickups the driver has not reached yet — plan jobs, engine legs and
@@ -815,7 +820,8 @@ export async function alertLateJobs(
       `https://fleetweb-vn.cartrack.com/delivery/map?job=${w.job_id}`,
     ].join("\n");
 
-    const sent = await sendZaloMessage(botToken, chatId, text);
+    // Markdown for the bold action; sendZaloMessage resends plain if Zalo refuses it.
+    const sent = await sendZaloMessage(botToken, chatId, text, "markdown");
     log(
       `Late alert ${sent ? "sent" : "failed"} for job ${w.job_id} (~${elapsedMin} phút trễ)`,
       sent ? "INFO" : "WARN",
