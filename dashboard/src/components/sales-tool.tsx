@@ -432,8 +432,11 @@ function hoursKey(h: WeekHours | undefined): string {
 }
 
 // A list rather than <input type="time">: phone pickers ignore `step`, and every
-// clinic keeps quarter-hour times anyway.
-const QUARTER_HOURS = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, "0")}:${String((i % 4) * 15).padStart(2, "0")}`);
+// clinic keeps quarter-hour times anyway. 05:30–22:30: the hours anyone keeps.
+const QUARTER_HOURS = Array.from({ length: 69 }, (_, i) => {
+  const m = 330 + i * 15;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+});
 const TIME_INPUT = "flex-1 min-w-0 min-h-[40px] appearance-none [text-align-last:center] border rounded-lg px-1 py-1.5 text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400";
 
 /** Giờ làm việc, laid out like Google Business Profile: a switch and a time range
