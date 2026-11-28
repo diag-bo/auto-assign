@@ -15,7 +15,7 @@ function check(label: string, cond: boolean, detail = "") {
 }
 
 const leg = (o: Partial<Leg> & { seq: number }): Leg => ({
-  from_name: "A", to_name: "B", departed_ts: null, arrived_ts: null, tat_mins: null, benchmark_mins: null,
+  from_name: "A", to_name: "B", from_lat: null, from_lng: null, to_lat: null, to_lng: null, departed_ts: null, arrived_ts: null, tat_mins: null, benchmark_mins: null,
   unscored: false, from_arrived_ts: null, from_ready_at: null, from_due_at: null, from_opens_at: null,
   to_ready_at: null, to_due_at: null, start_ts: null, start_bench_mins: null, ...o,
 });
@@ -25,6 +25,11 @@ const shift = [{ start: "06:00", end: "15:00" }];
 {
   const r = idleDay([leg({ seq: 1, departed_ts: T("08:00"), arrived_ts: T("09:00"), tat_mins: 60, benchmark_mins: 20 })], shift, D);
   check("slow ride counts minutes past benchmark + 15", r.idle_mins === 25, JSON.stringify(r.events));
+  const e = r.events[0];
+  check("slow ride carries from → to, took vs expected", e.from === "A" && e.place === "B" && e.took === 60 && e.expected === 20);
+  const m = idleDay([leg({ seq: 1, departed_ts: T("08:00"), arrived_ts: T("09:00"), tat_mins: 60, benchmark_mins: 20,
+    from_lat: 10.7, from_lng: 106.6, to_lat: 10.8, to_lng: 106.7 })], shift, D).events[0];
+  check("slow ride links Google Maps directions", m.map === "https://www.google.com/maps/dir/?api=1&origin=10.7,106.6&destination=10.8,106.7&travelmode=driving", String(m.map));
   const ok = idleDay([leg({ seq: 1, departed_ts: T("08:00"), arrived_ts: T("08:35"), tat_mins: 35, benchmark_mins: 20 })], shift, D);
   check("inside the 15-min grace is not idle", ok.idle_mins === 0);
   const out = idleDay([leg({ seq: 1, departed_ts: T("08:00"), arrived_ts: T("10:00"), tat_mins: 120, benchmark_mins: 20, unscored: true })], shift, D);

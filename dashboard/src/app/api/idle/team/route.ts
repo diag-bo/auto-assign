@@ -18,7 +18,7 @@ export const maxDuration = 60;
 export const preferredRegion = "sin1";
 
 const UUID = /^[0-9a-f-]{36}$/i;
-const LEG_COLS = "driver_id,driver_name,trip_date,seq,from_name,to_name,departed_ts,arrived_ts,tat_mins,benchmark_mins,unscored," +
+const LEG_COLS = "driver_id,driver_name,trip_date,seq,from_name,to_name,from_lat,from_lng,to_lat,to_lng,departed_ts,arrived_ts,tat_mins,benchmark_mins,unscored," +
   "from_arrived_ts,from_ready_at,from_due_at,from_opens_at,to_ready_at,to_due_at,start_ts,start_bench_mins";
 
 function monthRange(month: string) {

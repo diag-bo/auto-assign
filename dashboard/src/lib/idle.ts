@@ -36,7 +36,7 @@ export const LUNCH_EXCUSE_MIN = 60;
 export const STAY_EXEMPT = /^BRA\s*-\s*D0(04|07|09|15|21|23|36)$/;
 
 export type IdleLeg = Pick<TatLeg,
-  "seq" | "from_name" | "to_name" | "departed_ts" | "arrived_ts" | "tat_mins" | "benchmark_mins" | "unscored" |
+  "seq" | "from_name" | "to_name" | "from_lat" | "from_lng" | "to_lat" | "to_lng" | "departed_ts" | "arrived_ts" | "tat_mins" | "benchmark_mins" | "unscored" |
   "from_arrived_ts" | "from_ready_at" | "from_due_at" | "from_opens_at" | "to_ready_at" | "to_due_at" | "start_ts" | "start_bench_mins">;
 
 export interface IdleEvent {
@@ -50,7 +50,22 @@ export interface IdleEvent {
   seq: number;
   /** For a scheduled stop: the deadline it was judged against. */
   due?: string;
+  /** RIDE: where it set off from. */
+  from?: string | null;
+  /** RIDE: minutes the ride took (fair clock). STAY: minutes stayed once the
+   *  next job was ready. */
+  took?: number;
+  /** RIDE: the benchmark. FIRST: the expected ride from the start point. */
+  expected?: number;
+  /** RIDE / FIRST: arrival at the stop. */
+  arrived?: string;
+  /** RIDE: the leg as Google Maps directions, to check the road by eye. */
+  map?: string;
 }
+
+export const mapsLink = (fLat: number | null, fLng: number | null, tLat: number | null, tLng: number | null) =>
+  fLat == null || fLng == null || tLat == null || tLng == null ? undefined
+    : `https://www.google.com/maps/dir/?api=1&origin=${fLat},${fLng}&destination=${tLat},${tLng}&travelmode=driving`;
 
 export interface IdleDay {
   events: IdleEvent[];
@@ -80,7 +95,7 @@ export function idleDay(legs: IdleLeg[], shifts: ShiftWindow[], date: string): I
     const deadline = latest(go + first.start_bench_mins * 60_000, t(first.from_due_at));
     if (Number.isFinite(arrived)) {
       push({ kind: "first", at: iso(deadline), mins: mins(arrived - deadline), place: first.from_name, seq: first.seq,
-        ...(first.from_due_at ? { due: iso(deadline) } : {}) });
+        due: iso(deadline), expected: first.start_bench_mins, arrived: iso(arrived) });
     }
   }
 
@@ -91,16 +106,22 @@ export function idleDay(legs: IdleLeg[], shifts: ShiftWindow[], date: string): I
     const reached = t(l.from_arrived_ts);
     if (Number.isFinite(reached) && Number.isFinite(departed) && !STAY_EXEMPT.test(l.from_name ?? "")) {
       const waitFrom = latest(reached, t(l.to_ready_at), t(l.from_opens_at));
-      push({ kind: "stay", at: iso(waitFrom), mins: mins(departed - waitFrom) - STAY_LIMIT_MIN, place: l.from_name, seq: l.seq });
+      const stayed = mins(departed - waitFrom);
+      push({ kind: "stay", at: iso(waitFrom), mins: stayed - STAY_LIMIT_MIN, place: l.from_name, seq: l.seq, took: stayed });
     }
 
     // RIDE to the to stop.
     if (l.unscored || l.benchmark_mins == null || !Number.isFinite(arrived)) continue;
+    const ride = {
+      kind: "ride" as const, at: iso(departed), place: l.to_name, seq: l.seq, from: l.from_name,
+      took: l.tat_mins ?? undefined, expected: l.benchmark_mins, arrived: iso(arrived),
+      map: mapsLink(l.from_lat, l.from_lng, l.to_lat, l.to_lng),
+    };
     if (l.to_due_at) {
       const deadline = latest(t(l.to_due_at), latest(departed, t(l.to_ready_at)) + l.benchmark_mins * 60_000);
-      push({ kind: "ride", at: iso(departed), mins: mins(arrived - deadline), place: l.to_name, seq: l.seq, due: iso(deadline) });
+      push({ ...ride, mins: mins(arrived - deadline), due: iso(deadline) });
     } else if (l.tat_mins != null) {
-      push({ kind: "ride", at: iso(departed), mins: l.tat_mins - l.benchmark_mins - RIDE_GRACE_MIN, place: l.to_name, seq: l.seq });
+      push({ ...ride, mins: l.tat_mins - l.benchmark_mins - RIDE_GRACE_MIN });
     }
   }
 
