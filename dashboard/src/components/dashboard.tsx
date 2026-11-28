@@ -19,6 +19,7 @@ import { LeaveStatusPanel } from "./leave-status-panel";
 import { ConfigTodoPanel } from "./config-todo-panel";
 import { SheetAlarmBanner } from "./sheet-alarm-banner";
 import { TatTeamPanel } from "./tat-team-panel";
+import { IdleTeamPanel } from "./idle-team-panel";
 import { ShiftGrid } from "./shift-grid";
 import { SundayRosterPanel } from "./sunday-roster-panel";
 import { SalesTool } from "./sales-tool";
@@ -40,7 +41,7 @@ import type { LeaveSuppression } from "@/lib/leave-suppression";
 import type { LabcenterMetadataReport } from "@/lib/master-sync";
 
 type Env = "prod" | "uat";
-type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "pay" | "overtime" | "gas" | "drivers" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
+type RightTab = "attention" | "live" | "batch" | "config" | "schedule" | "distance" | "tat" | "idle" | "pay" | "overtime" | "gas" | "drivers" | "locations" | "shifts" | "sunday" | "tpl" | "bots" | "newcustomer";
 
 export function Dashboard() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -694,7 +695,7 @@ export function Dashboard() {
     leave.invalid.filter((r) => !r.recovered).length;
 
   const setupActive = ["config", "schedule", "shifts", "drivers", "sunday", "locations", "tpl", "bots", "newcustomer"].includes(rightTab);
-  const operationsActive = rightTab === "distance" || rightTab === "tat";
+  const operationsActive = rightTab === "distance" || rightTab === "tat" || rightTab === "idle";
   const payActive = rightTab === "pay" || rightTab === "overtime" || rightTab === "gas";
 
   /** Main menu, on the dark header bar. Icons only from 2xl: at 1280–1536px
@@ -859,6 +860,7 @@ export function Dashboard() {
           {operationsActive && <nav aria-label="Khoảng cách và Hiệu suất" className="flex flex-wrap items-center gap-1 shrink-0">
             <button aria-pressed={rightTab === "distance"} onClick={() => setRightTab("distance")} className={tabBtn(rightTab === "distance")}>Khoảng cách</button>
             <button aria-pressed={rightTab === "tat"} onClick={() => setRightTab("tat")} className={tabBtn(rightTab === "tat")}>Hiệu suất</button>
+            <button aria-pressed={rightTab === "idle"} onClick={() => setRightTab("idle")} className={tabBtn(rightTab === "idle")}>Thời gian chết</button>
           </nav>}
           {payActive && <nav aria-label="Lương" className="flex flex-wrap items-center gap-1 shrink-0">
             <button aria-pressed={rightTab === "pay"} onClick={() => setRightTab("pay")} className={tabBtn(rightTab === "pay")}>Lương PT</button>
@@ -1025,6 +1027,10 @@ export function Dashboard() {
             ) : rightTab === "tat" ? (
               <div className="h-[72vh] lg:h-full">
                 <TatTeamPanel />
+              </div>
+            ) : rightTab === "idle" ? (
+              <div className="h-[72vh] lg:h-full">
+                <IdleTeamPanel />
               </div>
             ) : rightTab === "shifts" ? (
               <div className="h-[72vh] min-h-0 lg:h-full"><ShiftGrid /></div>

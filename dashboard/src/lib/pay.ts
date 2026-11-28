@@ -130,7 +130,7 @@ function labelNames(labels: unknown): string[] {
  * and a mislabelled open is visible on screen as an unclosed one, where a
  * mislabelled close would silently eat the shift before it.
  */
-function punchKind(stop: TimelineStop): "in" | "out" {
+export function punchKind(stop: TimelineStop): "in" | "out" {
   const labels = labelNames(stop.jobLabels);
   if (labels.includes("check_out")) return "out";
   if (labels.includes("check_in")) return "in";

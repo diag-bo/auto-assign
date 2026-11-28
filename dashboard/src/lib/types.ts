@@ -247,6 +247,9 @@ export interface TimelineDeliveryWindow {
   stopId: number;
   timeFrom: string; // e.g. "11:00:00+07"
   timeTo: string;
+  /** Days after deliveryDate the window opens / closes (0 = same day). */
+  fromDayOffset?: number;
+  toDayOffset?: number;
 }
 
 /**

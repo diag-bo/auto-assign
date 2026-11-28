@@ -35,6 +35,7 @@
 import { roadDistancesForPairs } from "./distance-cache";
 import { newFallbackState, type QuotaSignal } from "./distance";
 import { isChamCong } from "./job-filters";
+import { punchKind } from "./pay";
 import type { TimelineRoute, TimelineStop } from "./types";
 
 /** Where a day's distance answers came from. Surfaced by the archive so the cost
@@ -133,6 +134,25 @@ export interface TatLeg {
    *  Carries its distance so mileage stays whole; carries no verdict, and is
    *  filtered out of every count the driver is judged on. */
   unscored: boolean;
+
+  // ── Raw stop facts for the idle-by-choice report (lib/idle.ts). Stored as
+  //    they are; every verdict is computed on read. ──────────────────────────
+  /** Arrival at the FROM visit — with departed_ts, how long the driver stayed. */
+  from_arrived_ts: string | null;
+  /** When the from / to job was ready for the driver (sendToDriverAt,
+   *  allowedToStartAt, scheduledDeliveryTs — the latest; window excluded). Unlike
+   *  available_at this is kept even when it post-dates the arrival. */
+  from_ready_at: string | null;
+  to_ready_at: string | null;
+  /** END of the stop's delivery window: the time the customer was promised. */
+  from_due_at: string | null;
+  to_due_at: string | null;
+  /** OPENING of the from stop's window: waiting for it is not a long stay. */
+  from_opens_at: string | null;
+  /** seq 1 only: the check-in tap before the first stop, and the expected ride
+   *  from where it was tapped to that stop. Null for drivers who do not tap. */
+  start_ts: string | null;
+  start_bench_mins: number | null;
 }
 
 /** Cartrack hands back VN-local wall time with no zone ("2026-08-12 14:31:07").
@@ -201,6 +221,33 @@ function availabilityOf(s: TimelineStop, tripDate: string): number | null {
   return stamps.length > 0 ? Math.max(...stamps) : null;
 }
 
+/** When the job was ready for the driver — availabilityOf without the window,
+ *  which is a promise to the customer rather than a release to the driver. */
+function readyOf(s: TimelineStop): number | null {
+  const stamps = [s.sendToDriverAt, s.allowedToStartAt, s.scheduledDeliveryTs]
+    .map((t) => { const iso = toIso(t); return iso ? Date.parse(iso) : NaN; })
+    .filter((ms) => Number.isFinite(ms));
+  return stamps.length > 0 ? Math.max(...stamps) : null;
+}
+
+/** The END of the stop's earliest-closing delivery window, epoch ms. Windows are
+ *  ranges ("08:00–08:30"), so arriving inside one is on time. */
+function dueOf(s: TimelineStop, tripDate: string): number | null {
+  let earliest: number | null = null;
+  for (const w of Array.isArray(s.deliveryWindows) ? s.deliveryWindows : []) {
+    const m = typeof w?.timeTo === "string" ? /^(\d{2}):(\d{2})(?::(\d{2}))?/.exec(w.timeTo) : null;
+    if (!m) continue;
+    const date = typeof s.deliveryDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(s.deliveryDate)
+      ? s.deliveryDate.slice(0, 10) : tripDate;
+    const ms = Date.parse(`${date}T${m[1]}:${m[2]}:${m[3] ?? "00"}+07:00`) +
+      (Number(w.toDayOffset) || 0) * 86_400_000;
+    if (Number.isFinite(ms) && (earliest == null || ms < earliest)) earliest = ms;
+  }
+  return earliest;
+}
+
+const isoOrNull = (ms: number | null) => (ms == null ? null : new Date(ms).toISOString());
+
 /** Minutes a leg of this length is allowed. Null distance → no target, and the
  *  leg is reported but left ungraded rather than being guessed at. */
 export function targetMinsFor(distanceKm: number | null): number | null {
@@ -247,6 +294,8 @@ interface StopEntry {
   arrived: string | null;
   /** Epoch ms, or null when the stop carries no availability stamp at all. */
   available: number | null;
+  ready: number | null;
+  due: number | null;
 }
 
 /** One VISIT: the driver being at a place once, however many jobs they worked there. */
@@ -255,7 +304,13 @@ interface Visit {
   arrived: string | null;
   departed: string;
   available: number | null;
+  /** Earliest across a merged visit, like `available`. */
+  ready: number | null;
+  /** Earliest-closing window across a merged visit — the tightest promise there. */
+  due: number | null;
 }
+
+const minOf = (a: number | null, b: number | null) => (a == null ? b : b == null ? a : Math.min(a, b));
 
 /** Identity of a place. customer_id is the real answer; coordinates are the fallback
  *  for a stop that carries none, truncated to ~1 m so GPS jitter at one address does
@@ -306,9 +361,11 @@ function mergeConsecutiveStops(ordered: StopEntry[]): Visit[] {
       if (e.available != null && (prev.available == null || e.available < prev.available)) {
         prev.available = e.available;
       }
+      prev.ready = minOf(prev.ready, e.ready);
+      prev.due = minOf(prev.due, e.due);
       continue;
     }
-    visits.push({ stop: e.stop, arrived: e.arrived, departed: e.completed, available: e.available });
+    visits.push({ stop: e.stop, arrived: e.arrived, departed: e.completed, available: e.available, ready: e.ready, due: e.due });
   }
   return visits;
 }
@@ -353,6 +410,8 @@ export function legsForRoute(route: TimelineRoute, tripDate: string): TatLeg[] {
       completed: toIso(s.activityCompletedTs),
       arrived: toIso(s.activityArrivedTs),
       available: availabilityOf(s, tripDate),
+      ready: readyOf(s),
+      due: dueOf(s, tripDate),
     }))
     .filter((e): e is StopEntry => e.completed !== null)
     .sort((a, b) => Date.parse(a.completed) - Date.parse(b.completed));
@@ -428,10 +487,35 @@ export function legsForRoute(route: TimelineRoute, tripDate: string): TatLeg[] {
       on_time: null,
       long_gap: false,
       unscored,
+
+      from_arrived_ts: from.arrived,
+      from_ready_at: isoOrNull(from.ready),
+      from_due_at: isoOrNull(from.due),
+      to_ready_at: isoOrNull(to.ready),
+      to_due_at: isoOrNull(to.due),
+      from_opens_at: windowOpensAt(f, tripDate),
+      start_ts: null,
+      start_bench_mins: null,
     });
   }
 
   return legs;
+}
+
+/** Where a driver's day started: the last check-in tap before the first stop was
+ *  reached, and where it was tapped. Only part-timers tap in Cartrack (full-time
+ *  attendance is MISA's), so for most full-time days there is none. */
+export function dayStartFor(route: TimelineRoute, firstArrived: string | null): { ts: string; lat: number; lng: number } | null {
+  if (!firstArrived) return null;
+  let best: { ts: string; lat: number; lng: number } | null = null;
+  for (const s of route.orderedStops ?? []) {
+    if (!isChamCong(s as unknown as { referenceNumber?: string | null; jobLabels?: unknown })) continue;
+    if (punchKind(s) !== "in" || s.latitude == null || s.longitude == null) continue;
+    const ts = toIso(s.activityCompletedTs) ?? toIso(s.activityArrivedTs);
+    if (!ts || Date.parse(ts) > Date.parse(firstArrived)) continue;
+    if (!best || Date.parse(ts) > Date.parse(best.ts)) best = { ts, lat: s.latitude, lng: s.longitude };
+  }
+  return best;
 }
 
 /**
@@ -522,8 +606,33 @@ export async function attachDistances(legs: TatLeg[]): Promise<DistanceStats> {
 export async function buildDayLegs(
   routes: TimelineRoute[], tripDate: string,
 ): Promise<{ legs: TatLeg[]; stats: DistanceStats }> {
-  const legs = routes.flatMap((r) => legsForRoute(r, tripDate));
+  const legs: TatLeg[] = [];
+  const starts: { leg: TatLeg; ts: string; lat: number; lng: number }[] = [];
+  for (const r of routes) {
+    const own = legsForRoute(r, tripDate);
+    legs.push(...own);
+    const start = own[0] && own[0].from_lat != null && own[0].from_lng != null
+      ? dayStartFor(r, own[0].from_arrived_ts ?? own[0].departed_ts) : null;
+    if (start) starts.push({ leg: own[0], ...start });
+  }
   const stats = await attachDistances(legs);
+
+  // The ride from the check-in place to the first stop, priced the same way as a
+  // leg. Its own call: these pairs repeat daily (home branch → first clinic), so
+  // after the first week this is all cache.
+  if (starts.length > 0) {
+    const results = await roadDistancesForPairs(
+      starts.map((s) => ({ from: { lat: s.lat, lon: s.lng }, to: { lat: s.leg.from_lat!, lon: s.leg.from_lng! } })),
+      undefined, { quotaExceeded: false }, newFallbackState(),
+    ).catch(() => []);
+    starts.forEach((s, i) => {
+      s.leg.start_ts = s.ts;
+      const r = results[i];
+      if (r?.distance_km == null) return;
+      const eta = typeof r.eta_mins === "number" && Number.isFinite(r.eta_mins) ? Math.round(r.eta_mins) : null;
+      s.leg.start_bench_mins = benchmarkMinsFor(targetMinsFor(r.distance_km), eta);
+    });
+  }
   return { legs, stats };
 }
 
