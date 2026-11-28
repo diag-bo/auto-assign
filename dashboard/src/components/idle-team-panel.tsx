@@ -162,7 +162,8 @@ export function IdleTeamPanel() {
         <p className="text-[11px] text-slate-400 px-3 py-2 border-t border-slate-200 shrink-0">
           Tính khi có việc mà tài xế chưa đi: chạy quá mục tiêu chặng hơn 15 phút; điểm có giờ hẹn thì trễ giờ hẹn là tính
           ngay; ở một điểm quá 20 phút khi việc kế tiếp đã sẵn sàng (trừ PSC trung chuyển D004/D007/D009/D015 và điểm
-          3PL); trễ điểm đầu tiên so với giờ vào ca (chỉ tài xế chấm công trên app). Trừ một lần nghỉ trưa tới 60 phút
+          3PL); trễ điểm đầu tiên so với giờ vào ca + thời gian chạy từ nơi chấm công, hoặc từ PSC trong config nếu không
+          chấm công. Trừ một lần nghỉ trưa tới 60 phút
           (11:00–14:00). % = thời gian chết ÷ giờ ca, ca kéo dài nếu về muộn.
           {data.facts_from && data.facts_from > `${month}-01` ? ` Ở lâu, giờ hẹn và điểm đầu chỉ có từ ${dayLabel(data.facts_from)}.` : ""}
         </p>

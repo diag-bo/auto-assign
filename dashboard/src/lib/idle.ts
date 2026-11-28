@@ -9,8 +9,9 @@
  *          time is never idle, and a job handed over too late to make the window
  *          is not the driver's fault.
  *   FIRST  the first stop of the day, the same way: from max(shift start, job
- *          ready) + the ride from the check-in place. Only drivers who tap in
- *          Cartrack (part-timers) have a check-in place, so others get no verdict.
+ *          ready) + the ride from the check-in place, or — for a driver who did
+ *          not tap in (full-timers) — from the PSC of their config rules
+ *          (supervisor, 2026-11-28). No start point → no verdict.
  *   STAY   staying at a stop more than 20 min while the next job was already
  *          ready. Waiting for the stop's own window to open is not counted, nor
  *          are hub PSCs and 3PL branches, where waiting for a handover is the job.

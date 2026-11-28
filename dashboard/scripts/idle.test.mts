@@ -81,5 +81,17 @@ const shift = [{ start: "06:00", end: "15:00" }];
   check("no shift → no working time", idleDay([], [], D).work_mins === null);
 }
 
+// START point without a check-in: the config PSC covering the first arrival.
+{
+  const { configStartFor } = await import("../src/lib/tat");
+  const row = (lat: number, s: string, e: string, fixed: number, rules: number) =>
+    ({ driver_id: "x", latitude: lat, longitude: 106, shift_start: s, shift_end: e, fixed_rules: fixed, rules });
+  const rows = [row(1, "06:00:00", "15:00:00", 1, 1), row(2, "15:00:00", "21:00:00", 5, 5), row(3, "06:00:00", "15:00:00", 0, 3)];
+  check("PSC whose hours cover the first arrival, fixed rules first", configStartFor(rows, T("07:10"))?.lat === 1);
+  check("evening first arrival takes the evening PSC", configStartFor(rows, T("16:00"))?.lat === 2);
+  check("no rule covers the hour → most rules overall", configStartFor(rows, T("22:00"))?.lat === 2);
+  check("no config → no start", configStartFor([], T("07:00")) === null);
+}
+
 if (failures) { console.error(`\n${failures} failed`); process.exit(1); }
 console.log("\nall passed");

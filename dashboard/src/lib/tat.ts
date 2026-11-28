@@ -149,8 +149,9 @@ export interface TatLeg {
   to_due_at: string | null;
   /** OPENING of the from stop's window: waiting for it is not a long stay. */
   from_opens_at: string | null;
-  /** seq 1 only: the check-in tap before the first stop, and the expected ride
-   *  from where it was tapped to that stop. Null for drivers who do not tap. */
+  /** seq 1 only: the check-in tap before the first stop (null for drivers who do
+   *  not tap), and the expected ride to that stop from where it was tapped — or,
+   *  without a tap, from the PSC of the driver's config rules. */
   start_ts: string | null;
   start_bench_mins: number | null;
 }
@@ -518,6 +519,32 @@ export function dayStartFor(route: TimelineRoute, firstArrived: string | null): 
   return best;
 }
 
+/** One v_driver_start_psc row: a PSC the driver's weekday config rules drop at,
+ *  for one shift window. */
+export interface ConfigStartRow {
+  driver_id: string; latitude: number; longitude: number;
+  shift_start: string | null; shift_end: string | null; fixed_rules: number; rules: number;
+}
+
+/** Where a driver who did not tap in starts: the PSC of their config rules whose
+ *  hours cover the first arrival (any rule, if none do), most fixed rules first,
+ *  then most rules. */
+export function configStartFor(rows: ConfigStartRow[], firstArrived: string | null): { lat: number; lng: number } | null {
+  if (rows.length === 0) return null;
+  const hm = firstArrived?.slice(11, 16) ?? ""; // VN wall time: toIso keeps +07:00
+  const covering = rows.filter((r) => r.shift_start && r.shift_end &&
+    r.shift_start.slice(0, 5) <= hm && hm < r.shift_end.slice(0, 5));
+  const score = new Map<string, { lat: number; lng: number; fixed: number; all: number }>();
+  for (const r of covering.length ? covering : rows) {
+    const k = `${r.latitude},${r.longitude}`;
+    const s = score.get(k) ?? { lat: r.latitude, lng: r.longitude, fixed: 0, all: 0 };
+    s.fixed += Number(r.fixed_rules) || 0; s.all += Number(r.rules) || 0;
+    score.set(k, s);
+  }
+  const best = [...score.values()].sort((a, b) => b.fixed - a.fixed || b.all - a.all)[0];
+  return { lat: best.lat, lng: best.lng };
+}
+
 /**
  * Fill in distance_km / target_mins / on_time / long_gap, mutating in place.
  *
@@ -605,15 +632,25 @@ export async function attachDistances(legs: TatLeg[]): Promise<DistanceStats> {
  *  archiver and any caller that wants a day without persisting it. */
 export async function buildDayLegs(
   routes: TimelineRoute[], tripDate: string,
+  /** v_driver_start_psc by driver — the start for drivers who did not tap in. */
+  configStarts: Map<string, ConfigStartRow[]> = new Map(),
 ): Promise<{ legs: TatLeg[]; stats: DistanceStats }> {
   const legs: TatLeg[] = [];
-  const starts: { leg: TatLeg; ts: string; lat: number; lng: number }[] = [];
+  const starts: { leg: TatLeg; ts: string | null; lat: number; lng: number }[] = [];
   for (const r of routes) {
     const own = legsForRoute(r, tripDate);
     legs.push(...own);
-    const start = own[0] && own[0].from_lat != null && own[0].from_lng != null
-      ? dayStartFor(r, own[0].from_arrived_ts ?? own[0].departed_ts) : null;
-    if (start) starts.push({ leg: own[0], ...start });
+    const first = own[0];
+    if (!first || first.from_lat == null || first.from_lng == null) continue;
+    const reached = first.from_arrived_ts ?? first.departed_ts;
+    // A check-in place wins: it is where they actually were. Otherwise the PSC
+    // their config sends them to (start_ts stays null, which says so).
+    const tapped = dayStartFor(r, reached);
+    const start = tapped ?? (() => {
+      const c = configStartFor(configStarts.get(first.driver_id) ?? [], reached);
+      return c ? { ts: null, ...c } : null;
+    })();
+    if (start) starts.push({ leg: first, ...start });
   }
   const stats = await attachDistances(legs);
 

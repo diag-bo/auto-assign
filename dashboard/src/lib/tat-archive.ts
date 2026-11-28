@@ -11,7 +11,7 @@ import type { Redis } from "@upstash/redis";
 import { sharedRedis } from "./redis";
 import { getTimelineRoutes, type Env } from "./cartrack";
 import { archivePickupEvents } from "./pickup-setup";
-import { buildDayLegs } from "./tat";
+import { buildDayLegs, type ConfigStartRow } from "./tat";
 import { buildDayPay } from "./pay";
 import { sbDelete, sbUpsert, sbSelectAll, supabaseConfigured, missingSupabaseEnv } from "./supabase-rest";
 import { keepStoredDistances, markPayDay } from "./pay-reconcile";
@@ -185,7 +185,15 @@ export async function archiveDay(date: string, env: Env = "prod", reads?: Mornin
     // Successful outputs survive a killed invocation. Manual/backfill calls
     // still rebuild all outputs. No raw timeline is kept between invocations.
     if (progress.legs === undefined) {
-      const { legs, stats } = await buildDayLegs(routes, date);
+      // Start points for the idle report's first-stop rule. Best effort: without
+      // them a day just has no first-stop verdict, never a failed archive.
+      const configStarts = new Map<string, ConfigStartRow[]>();
+      for (const row of await sbSelectAll<ConfigStartRow>("v_driver_start_psc",
+        "select=driver_id,latitude,longitude,shift_start,shift_end,fixed_rules,rules", "driver_id.asc,psc_id.asc,shift_start.asc,shift_end.asc")
+        .catch((e) => { console.error("[tat-archive] start PSCs:", e instanceof Error ? e.message : e); return []; })) {
+        (configStarts.get(row.driver_id) ?? configStarts.set(row.driver_id, []).get(row.driver_id)!).push(row);
+      }
+      const { legs, stats } = await buildDayLegs(routes, date, configStarts);
 
       const stamp = new Date().toISOString();
       if (legs.length > 0) {
